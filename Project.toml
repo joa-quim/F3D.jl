@@ -1,0 +1,7 @@
+name = "F3D"
+uuid = "9c67f86a-bae4-5246-a7f1-3af54b9e6640"
+authors = ["Joaquim Luis jluis@ualg.pt"]
+version = "0.1.0"
+
+[compat]
+julia = "1.10"
