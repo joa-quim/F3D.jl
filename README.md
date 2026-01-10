@@ -8,3 +8,15 @@
 [![BestieTemplate](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/JuliaBesties/BestieTemplate.jl/main/docs/src/assets/badge.json)](https://github.com/JuliaBesties/BestieTemplate.jl)
 
 Julia wrapper for the [f3d](https://f3d.app/docs/next/libf3d/OVERVIEW) library
+
+Warning, this is a prototype package. It needs a few manual steps to make it usable:
+
+- Clone this repository
+- Install `f3d`
+- Edit src/F3D.jl and set the `f3d` path in the `F3D_BIN_DIR` variable.
+- replace `"f3d_c_api.dll"` in the `libf3d` variable by `"f3d_c_api.so"` or `"f3d_c_api.dylib"` if you
+  are on MacOS or Linux respectively.
+- Do, in the Julia REPL, `] dev /path/to/F3D.jl`
+
+All this should be much improved when a formal `F3D.jl` package is created, but I need first find out
+how to create a `F3D_jll` artifact that uses the readily available precompiled binaries.
