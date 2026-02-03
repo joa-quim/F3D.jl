@@ -1,0 +1,96 @@
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\export.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\types_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\context_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\interactor_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\scene_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\window_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\camera_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Found dependent header: C:\programs\compa_libs\F3D\include\f3d\image_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:68
+┌ Info: Parsing headers...
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:90
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\camera_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\context_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\engine_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\image_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\interactor_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\log_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\options_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\scene_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\types_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\utils_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Processing header: C:\programs\compa_libs\F3D\include\f3d\window_c_api.h
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:33
+┌ Info: Building the DAG...
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:169
+┌ Info: Emit Julia expressions...
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:170
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_context_glx() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_context_wgl() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_context_cocoa() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_context_egl() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_context_osmesa() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_image_new_empty() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_image_get_supported_formats_count() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_image_get_supported_formats() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_none() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_egl() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_osmesa() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_external_glx() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_external_wgl() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_external_cocoa() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_external_egl() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_create_external_osmesa() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_autoload_plugins() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_get_all_reader_option_names() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_engine_get_lib_info() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_options_create() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Warning: No Prototype for CLCursor (CLFunctionDecl) f3d_utils_get_dpi_scale() - assuming no arguments
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\codegen.jl:129
+┌ Info: Done!
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:178
+┌ Info: [ProloguePrinter]: print to ../src/libf3d.jl
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:1098
+┌ Info: [GeneralPrinter]: print to ../src/libf3d.jl
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:1021
+┌ Info: [EpiloguePrinter]: print to ../src/libf3d.jl
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\passes.jl:1162
+┌ Info: Done!
+└ @ Clang.Generators C:\Users\j\.julia\packages\Clang\uJQ2L\src\generator\context.jl:178
