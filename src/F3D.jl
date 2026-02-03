@@ -44,7 +44,6 @@ function _find_asset_url()
     catch e
         error("Failed to query GitHub API: $e")
     finally
-        close(downloader)
         rm(tmp; force = true)
     end
 
@@ -169,7 +168,6 @@ function ensure_f3d()
     catch e
         error("Failed to download F3D: $e")
     finally
-        close(downloader)
     end
     @info "Download complete: $archive_path"
 
