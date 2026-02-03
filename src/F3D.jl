@@ -178,6 +178,29 @@ function ensure_f3d()
     return lib_parent
 end
 
+"""
+    update()
+
+Delete the current F3D library and download the latest nightly build.
+Call this manually when you want to update to a newer version:
+
+    using F3D
+    F3D.update()
+
+Note: Requires restarting Julia after updating for the new library to take effect.
+"""
+function update()
+    base_dir = dirname(@__FILE__)
+    lib_dir = joinpath(base_dir, "lib")
+    if isdir(lib_dir)
+        rm(lib_dir; recursive = true, force = true)
+        @info "Removed existing F3D libraries."
+    end
+    new_dir = ensure_f3d()
+    @info "F3D updated successfully. Restart Julia to use the new library."
+    return new_dir
+end
+
 #export ensure_f3d
 const libf3d = joinpath(ensure_f3d(), "f3d_c_api")
 
