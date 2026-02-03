@@ -3,5 +3,8 @@ uuid = "9c67f86a-bae4-5246-a7f1-3af54b9e6640"
 authors = ["Joaquim Luis jluis@ualg.pt"]
 version = "0.1.0"
 
+[deps]
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+
 [compat]
 julia = "1.10"
