@@ -665,7 +665,7 @@ end
 
 Structure representing an interaction binding.
 """
-mutable struct f3d_interaction_bind_t
+struct f3d_interaction_bind_t
     mod::f3d_interaction_bind_modifier_keys_t
     inter::NTuple{256, Cchar}
 end
@@ -977,7 +977,7 @@ end
 
 Structure containing binding documentation.
 """
-mutable struct f3d_binding_documentation_t
+struct f3d_binding_documentation_t
     doc::NTuple{512, Cchar}
     value::NTuple{256, Cchar}
 end
@@ -1379,6 +1379,22 @@ function f3d_scene_add_mesh(scene, mesh)
 end
 
 """
+    f3d_scene_add_buffer(scene, buffer, size)
+
+Add and load a memory buffer into the scene.
+
+# Arguments
+* `scene`: Scene handle.
+* `buffer`: Memory buffer containing a file.
+* `size`: Size of the buffer in bytes.
+# Returns
+1 on success, 0 on failure.
+"""
+function f3d_scene_add_buffer(scene, buffer, size)
+    ccall((:f3d_scene_add_buffer, libf3d), Cint, (Ptr{f3d_scene_t}, Ptr{Cvoid}, Csize_t), scene, buffer, size)
+end
+
+"""
     f3d_scene_clear(scene)
 
 Clear the scene of all added files.
@@ -1430,7 +1446,7 @@ The returned light\\_state is heap-allocated and must be freed with [`f3d_light_
 * `scene`: Scene handle.
 * `index`: Index of the light.
 # Returns
-Light state.
+Light state, NULL on failure.
 """
 function f3d_scene_get_light(scene, index)
     ccall((:f3d_scene_get_light, libf3d), Ptr{f3d_light_state_t}, (Ptr{f3d_scene_t}, Cint), scene, index)
@@ -2244,7 +2260,7 @@ The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 # Arguments
 * `offscreen`: If non-zero, the window will be hidden.
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create(offscreen)
     ccall((:f3d_engine_create, libf3d), Ptr{f3d_engine_t}, (Cint,), offscreen)
@@ -2259,7 +2275,7 @@ Create an engine with no window.
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_none()
     ccall((:f3d_engine_create_none, libf3d), Ptr{f3d_engine_t}, ())
@@ -2275,7 +2291,7 @@ The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 # Arguments
 * `offscreen`: If non-zero, the window will be hidden.
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_glx(offscreen)
     ccall((:f3d_engine_create_glx, libf3d), Ptr{f3d_engine_t}, (Cint,), offscreen)
@@ -2291,7 +2307,7 @@ The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 # Arguments
 * `offscreen`: If non-zero, the window will be hidden.
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_wgl(offscreen)
     ccall((:f3d_engine_create_wgl, libf3d), Ptr{f3d_engine_t}, (Cint,), offscreen)
@@ -2306,7 +2322,7 @@ Create an engine with an offscreen EGL window.
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_egl()
     ccall((:f3d_engine_create_egl, libf3d), Ptr{f3d_engine_t}, ())
@@ -2321,7 +2337,7 @@ Create an engine with an offscreen OSMesa window.
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_osmesa()
     ccall((:f3d_engine_create_osmesa, libf3d), Ptr{f3d_engine_t}, ())
@@ -2337,7 +2353,7 @@ A context to retrieve OpenGL symbols is required. The returned engine must be de
 # Arguments
 * `get_proc_address`: Function pointer for OpenGL symbol resolution.
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external(get_proc_address)
     ccall((:f3d_engine_create_external, libf3d), Ptr{f3d_engine_t}, (f3d_context_function_t,), get_proc_address)
@@ -2352,7 +2368,7 @@ Create an engine with an external GLX context (Linux only).
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external_glx()
     ccall((:f3d_engine_create_external_glx, libf3d), Ptr{f3d_engine_t}, ())
@@ -2367,7 +2383,7 @@ Create an engine with an external WGL context (Windows only).
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external_wgl()
     ccall((:f3d_engine_create_external_wgl, libf3d), Ptr{f3d_engine_t}, ())
@@ -2382,7 +2398,7 @@ Create an engine with an external COCOA context (macOS only).
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external_cocoa()
     ccall((:f3d_engine_create_external_cocoa, libf3d), Ptr{f3d_engine_t}, ())
@@ -2397,7 +2413,7 @@ Create an engine with an external EGL context.
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external_egl()
     ccall((:f3d_engine_create_external_egl, libf3d), Ptr{f3d_engine_t}, ())
@@ -2412,7 +2428,7 @@ Create an engine with an external OSMesa context.
 The returned engine must be deleted with [`f3d_engine_delete`](@ref)().
 
 # Returns
-Engine handle.
+Engine handle, NULL on failure.
 """
 function f3d_engine_create_external_osmesa()
     ccall((:f3d_engine_create_external_osmesa, libf3d), Ptr{f3d_engine_t}, ())
@@ -2438,9 +2454,11 @@ Set the cache path directory.
 # Arguments
 * `engine`: Engine handle.
 * `cache_path`: Cache path string.
+# Returns
+1 on success, 0 on failure.
 """
 function f3d_engine_set_cache_path(engine, cache_path)
-    ccall((:f3d_engine_set_cache_path, libf3d), Cvoid, (Ptr{f3d_engine_t}, Cstring), engine, cache_path)
+    ccall((:f3d_engine_set_cache_path, libf3d), Cint, (Ptr{f3d_engine_t}, Cstring), engine, cache_path)
 end
 
 """
@@ -2545,12 +2563,14 @@ Load a plugin.
 
 # Arguments
 * `path_or_name`: Plugin path or name.
+# Returns
+1 on success, 0 on failure.
 """
 function f3d_engine_load_plugin(path_or_name)
-    ccall((:f3d_engine_load_plugin, libf3d), Cvoid, (Cstring,), path_or_name)
+    ccall((:f3d_engine_load_plugin, libf3d), Cint, (Cstring,), path_or_name)
 end
 
-# no prototype is found for this function at engine_c_api.h:269:19, please use with caution
+# no prototype is found for this function at engine_c_api.h:271:19, please use with caution
 """
     f3d_engine_autoload_plugins()
 
@@ -2576,7 +2596,7 @@ function f3d_engine_get_plugins_list(plugin_path)
     ccall((:f3d_engine_get_plugins_list, libf3d), Ptr{Cstring}, (Cstring,), plugin_path)
 end
 
-# no prototype is found for this function at engine_c_api.h:294:21, please use with caution
+# no prototype is found for this function at engine_c_api.h:296:21, please use with caution
 """
     f3d_engine_get_all_reader_option_names()
 
@@ -2603,9 +2623,11 @@ Set a specific reader option.
 # Arguments
 * `name`: Option name.
 * `value`: Option value.
+# Returns
+1 on success, 0 on failure.
 """
 function f3d_engine_set_reader_option(name, value)
-    ccall((:f3d_engine_set_reader_option, libf3d), Cvoid, (Cstring, Cstring), name, value)
+    ccall((:f3d_engine_set_reader_option, libf3d), Cint, (Cstring, Cstring), name, value)
 end
 
 """
@@ -2620,7 +2642,7 @@ function f3d_engine_free_backend_list(backends)
     ccall((:f3d_engine_free_backend_list, libf3d), Cvoid, (Ptr{f3d_backend_info_t},), backends)
 end
 
-# no prototype is found for this function at engine_c_api.h:321:30, please use with caution
+# no prototype is found for this function at engine_c_api.h:324:30, please use with caution
 """
     f3d_engine_get_lib_info()
 
@@ -3573,4 +3595,19 @@ Free a string returned by any f3d\\_utils\\_* function.
 """
 function f3d_utils_string_free(str)
     ccall((:f3d_utils_string_free, libf3d), Cvoid, (Cstring,), str)
+end
+
+# no prototype is found for this function at utils_c_api.h:112:21, please use with caution
+"""
+    f3d_utils_get_dpi_scale()
+
+Calculate the primary monitor system zoom scale base on DPI.
+
+Only supported on Windows platform.
+
+# Returns
+DPI scale in double, or 1.0 on other platforms.
+"""
+function f3d_utils_get_dpi_scale()
+    ccall((:f3d_utils_get_dpi_scale, libf3d), Cdouble, ())
 end
