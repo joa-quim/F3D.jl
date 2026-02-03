@@ -202,7 +202,7 @@ function update()
 end
 
 #export ensure_f3d
-const libf3d = joinpath(ensure_f3d(), "f3d_c_api")
+const libf3d = joinpath(ensure_f3d(), _lib_filename())
 
 include("libf3d.jl")
 
