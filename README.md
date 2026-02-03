@@ -11,7 +11,7 @@ Julia wrapper for the [f3d](https://f3d.app/docs/next/libf3d/OVERVIEW) library
 
 Warning, this is a experimental package.
 
-To install do:
+To install do this:
 
 ```
 ] add https://github.com/joa-quim/F3D.jl
