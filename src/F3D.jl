@@ -202,7 +202,18 @@ function update()
 end
 
 #export ensure_f3d
-const libf3d = joinpath(ensure_f3d(), _lib_filename())
+const _f3d_bin_dir = ensure_f3d()
+
+# Add bin directory to PATH so dependent DLLs/shared libs can be found
+if Sys.iswindows()
+    ENV["PATH"] = _f3d_bin_dir * ";" * get(ENV, "PATH", "")
+elseif Sys.isapple()
+    ENV["DYLD_LIBRARY_PATH"] = _f3d_bin_dir * ":" * get(ENV, "DYLD_LIBRARY_PATH", "")
+else
+    ENV["LD_LIBRARY_PATH"] = _f3d_bin_dir * ":" * get(ENV, "LD_LIBRARY_PATH", "")
+end
+
+const libf3d = joinpath(_f3d_bin_dir, _lib_filename())
 
 include("libf3d.jl")
 
