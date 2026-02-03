@@ -36,12 +36,16 @@ function _find_asset_url()
     @info "Querying GitHub API for F3D nightly release..."
 
     local body::String
-    buf = IOBuffer()
+    tmp = tempname()
+    downloader = Downloads.Downloader()
     try
-        Downloads.download(api_url, buf; headers = ["Accept" => "application/vnd.github.v3+json"])
-        body = String(take!(buf))
+        Downloads.download(api_url, tmp; headers = ["Accept" => "application/vnd.github.v3+json"], downloader = downloader)
+        body = read(tmp, String)
     catch e
         error("Failed to query GitHub API: $e")
+    finally
+        close(downloader)
+        rm(tmp; force = true)
     end
 
     os, arch, ext = _get_asset_filter()
@@ -159,10 +163,13 @@ function ensure_f3d()
     archive_path = joinpath(lib_dir, archive_name)
 
     @info "Downloading F3D from $url ..."
+    downloader = Downloads.Downloader()
     try
-        Downloads.download(url, archive_path)
+        Downloads.download(url, archive_path; downloader = downloader)
     catch e
         error("Failed to download F3D: $e")
+    finally
+        close(downloader)
     end
     @info "Download complete: $archive_path"
 
