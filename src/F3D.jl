@@ -1,6 +1,5 @@
 module F3D
 
-using Downloads
 
 """
     _get_asset_filter() -> (os, arch, ext)
@@ -37,9 +36,8 @@ function _find_asset_url()
 
     local body::String
     tmp = tempname()
-    downloader = Downloads.Downloader()
     try
-        Downloads.download(api_url, tmp; headers = ["Accept" => "application/vnd.github.v3+json"], downloader = downloader)
+        run(`curl -sL -H "Accept: application/vnd.github.v3+json" -o $tmp $api_url`)
         body = read(tmp, String)
     catch e
         error("Failed to query GitHub API: $e")
@@ -162,12 +160,10 @@ function ensure_f3d()
     archive_path = joinpath(lib_dir, archive_name)
 
     @info "Downloading F3D from $url ..."
-    downloader = Downloads.Downloader()
     try
-        Downloads.download(url, archive_path; downloader = downloader)
+        run(`curl -sL -o $archive_path $url`)
     catch e
         error("Failed to download F3D: $e")
-    finally
     end
     @info "Download complete: $archive_path"
 
