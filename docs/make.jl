@@ -63,7 +63,7 @@ makedocs(;
     authors = "Joaquim Luis jluis@ualg.pt",
     repo = "https://github.com/joa-quim/F3D.jl/blob/{commit}{path}#{line}",
     sitename = "F3D.jl",
-    format = Documenter.HTML(; canonical = "https://joa-quim.github.io/F3D.jl"),
+    format = Documenter.HTML(; canonical = "https://joa-quim.github.io/F3D.jl", size_threshold = 300_000),
     pages = list_pages(),
 )
 
