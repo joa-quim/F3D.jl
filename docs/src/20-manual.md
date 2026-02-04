@@ -886,11 +886,13 @@ end
 
 ## Updating F3D
 
-To update to the latest nightly build:
-
 ```julia
 using F3D
-F3D.update()
+F3D.update()          # latest nightly build
+F3D.update("3.4")     # latest 3.4.x release (e.g. 3.4.1)
+F3D.update("3.4.0")   # exact version 3.4.0
 ```
 
-This deletes the cached binaries and re-downloads. Restart Julia after updating.
+This deletes the cached binaries and re-downloads the specified version. Restart Julia after updating.
+
+When a partial version like `"3.4"` is given, the latest patch release is selected automatically (skipping pre-releases like RC). The full version `"3.4.0"` downloads that exact release.
