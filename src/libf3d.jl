@@ -1564,6 +1564,7 @@ end
     FLOAT = 2
 end
 
+"""Opaque handle to an image object."""
 const f3d_image = Cvoid
 
 """

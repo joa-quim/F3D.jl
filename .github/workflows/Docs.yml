@@ -24,6 +24,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+permissions:
+  contents: write
+  statuses: write
+
 jobs:
   docs:
     name: Documentation
@@ -41,17 +45,9 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
-      - name: Run doctest
-        run: |
-          julia --project=docs -e '
-            using Documenter: DocMeta, doctest
-            using F3D
-            DocMeta.setdocmeta!(F3D, :DocTestSetup, :(using F3D); recursive=true)
-            doctest(F3D)'
       - name: Generate and deploy documentation
         run: julia --project=docs docs/make.jl
         env:
           JULIA_PKG_SERVER: ""
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-          GKSwstype: "100" # https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
+          GKSwstype: "100"
