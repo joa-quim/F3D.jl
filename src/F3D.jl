@@ -25,15 +25,11 @@ function _get_asset_filter()
 end
 
 """
-    _find_asset_url() -> String
+    _github_api_fetch(api_url) -> String
 
-Query the GitHub API for the F3D nightly release and return the download URL
-for the raytracing asset matching the current platform.
+Fetch a GitHub API URL and return the response body as a string.
 """
-function _find_asset_url()
-    api_url = "https://api.github.com/repos/f3d-app/f3d/releases/tags/nightly"
-    @info "Querying GitHub API for F3D nightly release..."
-
+function _github_api_fetch(api_url)
     local body::String
     tmp = tempname()
     try
@@ -44,17 +40,89 @@ function _find_asset_url()
     finally
         rm(tmp; force = true)
     end
+    return body
+end
+
+"""
+    _find_release_tag(version) -> String
+
+Resolve a version string to a GitHub release tag.
+
+- `"nightly"` → `"nightly"`
+- `"3.4.1"` → `"v3.4.1"` (exact match, verified to exist)
+- `"3.4"` → `"v3.4.1"` (latest matching v3.4.x release)
+"""
+function _find_release_tag(version::AbstractString)
+    version == "nightly" && return "nightly"
+
+    parts = split(version, '.')
+    if length(parts) == 3
+        # Exact version: verify it exists
+        tag = "v$version"
+        api_url = "https://api.github.com/repos/f3d-app/f3d/releases/tags/$tag"
+        body = _github_api_fetch(api_url)
+        if occursin("\"Not Found\"", body)
+            error("Release $tag not found on GitHub")
+        end
+        return tag
+    elseif length(parts) == 2
+        # Partial version: find latest matching release
+        @info "Searching for latest v$version.x release..."
+        api_url = "https://api.github.com/repos/f3d-app/f3d/releases?per_page=100"
+        body = _github_api_fetch(api_url)
+        prefix = "v$version."
+        best_tag = ""
+        best_patch = -1
+        for m in eachmatch(r"\"tag_name\"\s*:\s*\"(v[^\"]+)\"", body)
+            tag = String(m.captures[1])
+            if startswith(tag, prefix)
+                # Extract patch number, skip pre-releases like RC
+                rest = tag[length(prefix)+1:end]
+                patch = tryparse(Int, rest)
+                if patch !== nothing && patch > best_patch
+                    best_patch = patch
+                    best_tag = tag
+                end
+            end
+        end
+        if best_tag == ""
+            error("No release found matching v$version.x")
+        end
+        @info "Found release: $best_tag"
+        return best_tag
+    else
+        error("Invalid version format: \"$version\". Use \"3.4\" or \"3.4.1\" or \"nightly\".")
+    end
+end
+
+"""
+    _find_asset_url(version="nightly") -> String
+
+Query the GitHub API for an F3D release and return the download URL
+for the raytracing asset matching the current platform.
+
+- `"nightly"` → latest nightly build
+- `"3.4.1"` → exact version 3.4.1
+- `"3.4"` → latest 3.4.x release
+"""
+function _find_asset_url(version::AbstractString="nightly")
+    tag = _find_release_tag(version)
+    api_url = "https://api.github.com/repos/f3d-app/f3d/releases/tags/$tag"
+    @info "Querying GitHub API for F3D release '$tag'..."
+
+    body = _github_api_fetch(api_url)
 
     os, arch, ext = _get_asset_filter()
     ext_escaped = replace(ext, "." => "\\.")
 
     # Match: browser_download_url pointing to an asset containing OS, arch, "raytracing", and the right extension
-    # Example filename: F3D-3.4.1-56-g30d63098-Windows-x86_64-raytracing.zip
+    # Nightly example: F3D-3.4.1-56-g30d63098-Windows-x86_64-raytracing.zip
+    # Release example: F3D-3.4.1-Windows-x86_64-raytracing.zip
     pattern = Regex("\"browser_download_url\"\\s*:\\s*\"(https://[^\"]*$(os)[^\"]*$(arch)[^\"]*raytracing$(ext_escaped))\"")
 
     m = match(pattern, body)
     if m === nothing
-        error("Could not find a matching F3D nightly raytracing asset for $os-$arch ($ext)")
+        error("Could not find a matching F3D raytracing asset for $os-$arch ($ext) in release '$tag'")
     end
     url = String(m.captures[1])
     @info "Found asset URL: $url"
@@ -180,26 +248,48 @@ function ensure_f3d()
 end
 
 """
-    update()
+    update(version="nightly")
 
-Delete the current F3D library and download the latest nightly build.
-Call this manually when you want to update to a newer version:
+Delete the current F3D library and download the specified version.
 
-    using F3D
-    F3D.update()
+    F3D.update()          # latest nightly
+    F3D.update("3.4")     # latest 3.4.x release
+    F3D.update("3.4.0")   # exact version 3.4.0
 
-Note: Requires restarting Julia after updating for the new library to take effect.
+Requires restarting Julia after updating for the new library to take effect.
 """
-function update()
+function update(version::AbstractString="nightly")
     base_dir = dirname(@__FILE__)
     lib_dir = joinpath(base_dir, "lib")
     if isdir(lib_dir)
         rm(lib_dir; recursive = true, force = true)
         @info "Removed existing F3D libraries."
     end
-    new_dir = ensure_f3d()
-    @info "F3D updated successfully. Restart Julia to use the new library."
-    return new_dir
+    url = _find_asset_url(version)
+
+    archive_name = basename(url)
+    mkpath(lib_dir)
+    archive_path = joinpath(lib_dir, archive_name)
+
+    @info "Downloading F3D from $url ..."
+    try
+        run(`curl -sL -o $archive_path $url`)
+    catch e
+        error("Failed to download F3D: $e")
+    end
+    @info "Download complete: $archive_path"
+
+    @info "Extracting archive..."
+    _extract_archive!(archive_path, lib_dir)
+
+    rm(archive_path; force = true)
+    @info "Archive removed."
+
+    lib_name = _lib_filename()
+    lib_path = _find_file(lib_dir, lib_name)
+    lib_parent = dirname(lib_path)
+    @info "F3D updated to '$version'. Restart Julia to use the new library."
+    return lib_parent
 end
 
 #export ensure_f3d
