@@ -11,8 +11,19 @@ Julia wrapper for the [f3d](https://f3d.app/docs/next/libf3d/OVERVIEW) library
 
 Warning, this is a experimental package.
 
-To install do this:
+To install do:
 
 ```
 ] add https://github.com/joa-quim/F3D.jl
+```
+
+The tests run fine locally (all pass on Windows and two fail on Linux) but the CI runs crash???.
+
+The `test/test_mesh.jl` example shows _how to display a cow_ (the `cow.vtp` lives in the tests directory too).
+To run it do:
+
+```
+using F3D
+include(joinpath(pkgdir(F3D), "test", "test_mesh.jl"))
+test_mesh()
 ```
