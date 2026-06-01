@@ -1255,18 +1255,17 @@ end
 const f3d_interactor_callback_t = Ptr{Cvoid}
 
 """
-    f3d_interactor_start_with_callback(interactor, delta_time, callback, user_data)
+    f3d_interactor_set_event_loop_user_callback(interactor, callback, user_data)
 
-Start the interactor event loop.
+Set the event loop user callback.
 
 # Arguments
 * `interactor`: Interactor handle.
-* `delta_time`: Time step in seconds.
 * `callback`: Optional user callback called at the start of each event-loop iteration. May be NULL if no callback is desired.
 * `user_data`: Optional opaque pointer passed verbatim to callback.
 """
-function f3d_interactor_start_with_callback(interactor, delta_time, callback, user_data)
-    ccall((:f3d_interactor_start_with_callback, libf3d), Cvoid, (Ptr{f3d_interactor_t}, Cdouble, f3d_interactor_callback_t, Ptr{Cvoid}), interactor, delta_time, callback, user_data)
+function f3d_interactor_set_event_loop_user_callback(interactor, callback, user_data)
+    ccall((:f3d_interactor_set_event_loop_user_callback, libf3d), Cvoid, (Ptr{f3d_interactor_t}, f3d_interactor_callback_t, Ptr{Cvoid}), interactor, callback, user_data)
 end
 
 """
