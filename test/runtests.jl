@@ -706,15 +706,21 @@ end
 
     F3D.f3d_interactor_remove_binding(interactor, bind)
 
-    # start_with_callback using a stop callback
+    # event-loop user callback that requests stop, then run the loop
     stop_cb = @cfunction(function(user_data::Ptr{Cvoid})
         F3D.f3d_interactor_request_stop(Ptr{F3D.f3d_interactor_t}(user_data))
         return nothing
     end, Cvoid, (Ptr{Cvoid},))
-    F3D.f3d_interactor_start_with_callback(interactor, 0.01, stop_cb, Ptr{Cvoid}(interactor))
+    F3D.f3d_interactor_set_event_loop_user_callback(interactor, stop_cb, Ptr{Cvoid}(interactor))
+    F3D.f3d_interactor_start(interactor, 0.01)
 
     F3D.f3d_engine_delete(engine)
     @test true
 end
+
+# ============================================================
+# test_scene_from_memory (port of TestSDKSceneFromMemory.cxx)
+# ============================================================
+include("test_scene_from_memory.jl")
 
 end  # top-level testset
