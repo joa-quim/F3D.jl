@@ -723,4 +723,9 @@ end
 # ============================================================
 include("test_scene_from_memory.jl")
 
+# ============================================================
+# Extended functionality (model_scale + f3d_ext); auto-skips on a stock DLL
+# ============================================================
+include("test_f3d_ext.jl")
+
 end  # top-level testset
