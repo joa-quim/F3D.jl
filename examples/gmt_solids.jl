@@ -519,7 +519,6 @@ per-face colours when present. Blocks until the window is closed, unless `async`
 - `flat=false`: flat (faceted) shading instead of smooth normals.
 - `edges=false`: draw the mesh wireframe edges.
 - `linewidth=1.0`: edge line width in pixels (with `edges=true`).
-- `trihedron=false`: add an XYZ trihedron to the mesh (incompatible with `drape`).
 - `axes=true`: show the corner orientation gizmo (forced off under `topdown`).
 - `grid=true`: show f3d's floor grid at the bbox bottom = cube-axes floor (forced
   off under `topdown`).
@@ -571,7 +570,7 @@ view_fv(fv::GMT.GMTfv; async::Bool=true, kwargs...) =
 function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractString="F3D — GMT solid",
 				 size::Tuple{Int,Int}=(1600, 1200), bg=(0.1, 0.1, 0.15),
 				 lights=(), flat::Bool=false, axes::Bool=true,
-				 grid::Bool=true, trihedron::Bool=false, edges::Bool=false,
+				 grid::Bool=true, edges::Bool=false,
 				 offscreen::Bool=false, saveimg::String="", mapexport::AbstractString="",
 				 azimuth::Real=-40.0, elevation::Real=25.0, topdown::Bool=false,
 				 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
@@ -591,8 +590,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	end
 
 	do_drape = !isempty(drape)
-	fvm = trihedron ? add_trihedron!(deepcopy(fv)) : fv   # copy: don't mutate caller's fv
-	m = fv_to_mesh(fvm; flat = flat, drape = do_drape)
+	m = fv_to_mesh(fv; flat = flat, drape = do_drape)
 
 	F3D.f3d_engine_autoload_plugins()
 	engine = F3D.f3d_engine_create(Cint(offscreen ? 1 : 0))
@@ -874,108 +872,6 @@ function colorize_by_z!(fv::GMT.GMTfv)
 	return fv
 end
 
-# ---------------------------------------------------------------------------
-# Origin trihedron as real geometry: three colour-coded arrows along +X (red),
-# +Y (green), +Z (blue) starting at (0,0,0) — a thin box shaft + a cone tip.
-# Appended to the FV as extra colour-groups (one of quads for the shafts, one of
-# triangles for the cones) so the existing fv_to_mesh colour path folds the three
-# axis colours into the same palette/texture — no separate mesh, no extra texture.
-# Lets you see the object's position/scale/orientation relative to the origin.
-# ---------------------------------------------------------------------------
-function _box(x0, x1, y0, y1, z0, z1)
-	V = Float64[x0 y0 z0; x1 y0 z0; x1 y1 z0; x0 y1 z0;
-				x0 y0 z1; x1 y0 z1; x1 y1 z1; x0 y1 z1]
-	F = Int[1 4 3 2; 5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8]  # CCW outward
-	return V, F
-end
-
-# Cone along axis `a` (1=X,2=Y,3=Z): base ring (radius cr) at coord `base`,
-# apex at `tip`. Returns verts ((nseg+2)×3) and triangle faces ((2*nseg)×3),
-# face indices local 1-based: ring 1..nseg, apex nseg+1, base centre nseg+2.
-function _cone(a::Int, base::Float64, tip::Float64, cr::Float64, nseg::Int)
-	p1, p2 = ((2, 3), (3, 1), (1, 2))[a]               # the two axes ⊥ to `a`
-	ncv = nseg + 2
-	V = zeros(Float64, ncv, 3)
-	for k in 1:nseg
-		θ = 2π * (k - 1) / nseg
-		V[k, a]  = base
-		V[k, p1] = cr * cos(θ)
-		V[k, p2] = cr * sin(θ)
-	end
-	V[nseg+1, a] = tip                                  # apex
-	V[nseg+2, a] = base                                 # base centre
-	F = Matrix{Int}(undef, 2nseg, 3)
-	for k in 1:nseg
-		kn = k % nseg + 1
-		F[k, 1], F[k, 2], F[k, 3]                = nseg + 1, k,  kn   # side (apex,k,k+1)
-		F[nseg+k, 1], F[nseg+k, 2], F[nseg+k, 3] = nseg + 2, kn, k    # base cap (centre,k+1,k)
-	end
-	return V, F
-end
-
-function add_trihedron!(fv::GMT.GMTfv; len=nothing, lenfrac=(1.05, 1.05, 1.10),
-						rad=NaN, headlen=NaN, nseg::Int=16,
-						anchor=nothing, colors=("#ff3030", "#30c030", "#3060ff"))
-	V = fv.verts
-	vmin = vec(minimum(V, dims = 1))
-	vmax = vec(maximum(V, dims = 1))
-	ext = vmax .- vmin                                        # (dx, dy, dz) model extents
-	S = maximum(ext);  (S <= 0 || !isfinite(S)) && (S = 1.0)  # characteristic model size
-	# Where the arrows sit. Default = the model's min corner (so the trihedron
-	# rides on the data); for geographic/offset grids the true world origin
-	# (0,0,0) is far away and would push the axes off-screen. `anchor` overrides
-	# (pass (0,0,0) for the real origin).
-	o = anchor === nothing ? vmin : Float64[anchor[1], anchor[2], anchor[3]]
-	# Each arrow spans `lenfrac[a]` of THAT axis' own (already z-scaled) extent,
-	# so the axes run the full data and poke a little past the edge. Default:
-	# X,Y = 1.05x (5% overshoot) of their horizontal fig dimension; Z = 1.10x of
-	# its z extent — which already carries `vexag`, so Z tracks the vertical
-	# exaggeration.
-	Laxis = len === nothing ? ntuple(a -> lenfrac[a] * ext[a], 3) :
-			len isa Number   ? ntuple(_ -> float(len), 3) :
-							   ntuple(a -> float(len[a]), 3)
-	r  = isnan(rad) ? 0.0015 * S : float(rad)           # thin shafts (keyed to model size)
-	cr = 4.0 * r                                        # cone base radius
-	hl = isnan(headlen) ? 0.04 * S : float(headlen)     # arrowhead length, SAME for all axes
-
-	# --- shafts: 3 boxes, quads --- full length `Laxis`; arrowhead added ON TOP
-	bars = (_box(0.0, Laxis[1], -r, r, -r, r),          # X
-			_box(-r, r, 0.0, Laxis[2], -r, r),          # Y
-			_box(-r, r, -r, r, 0.0, Laxis[3]))          # Z
-	Vbar = Matrix{Float64}(undef, 24, 3)
-	Fbar = Matrix{Int}(undef, 18, 4)
-	colbar = Vector{String}(undef, 18)
-	vo = fo = 0
-	for (b, (Vb, Fb)) in enumerate(bars)
-		Vbar[vo+1:vo+8, :] = Vb
-		Fbar[fo+1:fo+6, :] = Fb .+ vo
-		colbar[fo+1:fo+6] .= "-G" * colors[b]
-		vo += 8;  fo += 6
-	end
-
-	# --- cones: 3 arrowheads, triangles ---
-	ncv = nseg + 2
-	Vcone  = Matrix{Float64}(undef, 3ncv, 3)
-	Fcone  = Matrix{Int}(undef, 3 * 2nseg, 3)
-	colcone = Vector{String}(undef, 3 * 2nseg)
-	vo = fo = 0
-	for a in 1:3
-		Vc, Fc = _cone(a, Laxis[a], Laxis[a] + hl, cr, nseg)   # base at axis tip, apex hl beyond
-		Vcone[vo+1:vo+ncv, :] = Vc
-		Fcone[fo+1:fo+2nseg, :] = Fc .+ vo
-		colcone[fo+1:fo+2nseg] .= "-G" * colors[a]
-		vo += ncv;  fo += 2nseg
-	end
-
-	Vbar  .+= o'                                        # shift arrows to the anchor corner
-	Vcone .+= o'
-	nv0 = size(fv.verts, 1)
-	fv.verts = vcat(fv.verts, Vbar, Vcone)
-	push!(fv.faces, Fbar .+ nv0);            push!(fv.color, colbar);  push!(fv.isflat, false)
-	push!(fv.faces, Fcone .+ (nv0 + 24));    push!(fv.color, colcone); push!(fv.isflat, false)
-	return fv
-end
-
 # Catalogue of solids to demo. Each builds and returns a GMTfv.
 const SOLIDS = Dict(
 	"icosahedron" => () -> icosahedron(1.0),
@@ -1168,7 +1064,6 @@ coloured `GMTfv` -> interactive viewer (or an offscreen export).
 - `flat=false`: flat (faceted) shading instead of smooth.
 - `axes=true`, `grid=true`: orientation gizmo / f3d floor grid (both forced off under `topdown`).
 - `edges=false`, `linewidth=1.0`: draw mesh edges and their width.
-- `trihedron=false`: add an XYZ trihedron to the mesh.
 
 # Extended interactions (forwarded; need an f3d built with `c/f3d_ext_*.cxx`)
 - `cube_axes=true`: labelled bounding-box (X/Y/Z tick) axes with coords.
@@ -2016,7 +1911,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 end
 
 function main(name::AbstractString="torus"; color::Bool=true, lights=DEMO_LIGHTS, flat::Bool=false,
-			  axes::Bool=true, grid::Bool=true, trihedron::Bool=false)
+			  axes::Bool=true, grid::Bool=true)
 	builder=get(SOLIDS, lowercase(name), nothing)
 	if (builder === nothing)
 		error("unknown solid '$name'. Choose one of: $(join(sort(collect(keys(SOLIDS))), ", "))")
@@ -2024,19 +1919,18 @@ function main(name::AbstractString="torus"; color::Bool=true, lights=DEMO_LIGHTS
 	fv = builder()
 	color && colorize_by_z!(fv)         # fill fv.color so the colour path is exercised
 	view_fv(fv; title="F3D — GMT $name" * (flat ? " (flat)" : ""),
-			lights=lights, flat=flat, axes=axes, grid=grid, trihedron=trihedron)
+			lights=lights, flat=flat, axes=axes, grid=grid)
 end
 
 if !isempty(PROGRAM_FILE) && lowercase(abspath(PROGRAM_FILE)) == lowercase(@__FILE__)
 	name = isempty(ARGS) ? "torus" : ARGS[1]
 	flat = any(a -> lowercase(a) == "flat", ARGS)   # e.g. `julia gmt_solids.jl cube flat`
-	tri  = any(a -> lowercase(a) in ("trihedron", "axes", "arrows"), ARGS)
 	if lowercase(name) in ("grid", "peaks")         # demo the grid bridge: `julia gmt_solids.jl grid`
-		view_grid(GMT.peaks(); flat=flat, trihedron=tri)
+		view_grid(GMT.peaks(); flat=flat)
 	elseif isfile(name)                             # a grid file: `julia gmt_solids.jl dem.grd`
-		view_grid(name; flat=flat, trihedron=tri)
+		view_grid(name; flat=flat)
 	else
-		main(name; flat=flat, trihedron=tri)    # e.g. `julia gmt_solids.jl cube trihedron`
+		main(name; flat=flat)                   # e.g. `julia gmt_solids.jl cube`
 	end
 end
 
