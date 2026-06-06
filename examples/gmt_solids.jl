@@ -25,6 +25,14 @@ using F3D
 using GMT
 using Libdl     # dlopen/dlsym — probe for optional f3d_ext symbols (rubber-band pick)
 
+# SINGLE SOURCE OF TRUTH for the rotation-centre gizmo (Fledermaus scale handle: compass /
+# tilt rings + vertical cone). BOTH viewers — view_grid (via _view_fv_impl) and view_points —
+# use this as their `scale_handle` kwarg default, so the rings are enabled by the EXACT same
+# procedure and can never desync. (They once did: _view_fv_impl defaulted false while
+# view_points defaulted true, and the gizmo silently vanished from view_grid.) The actual
+# enable runs through the shared `_enable_extras` helper in both viewers.
+const SHOW_ROTATION_RINGS = true
+
 # ---------------------------------------------------------------------------
 # GMT "-G" colour string -> (r,g,b) UInt8
 # ---------------------------------------------------------------------------
@@ -567,7 +575,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 				 offscreen::Bool=false, saveimg::String="", mapexport::AbstractString="",
 				 azimuth::Real=-40.0, elevation::Real=25.0, topdown::Bool=false,
 				 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
-				 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=false,
+				 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=SHOW_ROTATION_RINGS,
 				 drape::GMT.GMTimage=GMT.GMTimage(), drape_clip::Bool=false,
 				 drape_emis::GMT.GMTimage=GMT.GMTimage(),
 				 drape_light::Real=1.0, drape_unlit::Bool=false, linewidth::Real=1.0,
@@ -1100,12 +1108,6 @@ function grid2fv(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor::I
 	return tri2fv(D; cmap=cmap, zscale=zscale, vfrac=vfrac, vexag=vexag, isgeog=GMT.isgeog(G), ncolor=ncolor)
 end
 
-# Default extras view_grid turns on unless the caller overrides them. SINGLE SOURCE OF
-# TRUTH — applied by the get! loop in view_grid AND asserted by the "view_grid defaults"
-# testset, so dropping an entry breaks behaviour and test together (the scale_handle gizmo
-# rings once silently regressed because this default went missing, with no test to catch it).
-const VIEW_GRID_DEFAULTS = (up = "+Z", cube_axes = true, scale_handle = true)
-
 """
 	view_grid(G; kwargs...)
 
@@ -1207,17 +1209,10 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 	# geo footprint (x0,x1,y0,y1,proj) of a grid -> lets view_fv stamp a GeoTIFF on .tiff export.
 
 	geo(g) = (g.range[1], g.range[2], g.range[3], g.range[4], isempty(g.proj4) ? g.wkt : g.proj4)
-	# Grid viewer defaults (caller can override any): lay the surface flat with Z up
-	# (X,Y on the floor) and show the labelled cube axes. These flow on to view_fv.
+	# No default-patching here: up=+Z, cube_axes and the scale_handle gizmo (rotation rings)
+	# all default in _view_fv_impl — scale_handle = SHOW_ROTATION_RINGS, the SAME default
+	# view_points uses, so both viewers enable the rings by the identical procedure.
 	vkw = Dict{Symbol,Any}(kwargs)
-	# Defaults view_grid turns on unless the caller overrides. SINGLE SOURCE OF TRUTH:
-	# applied here by loop AND asserted by the "view_grid defaults" testset, so dropping an
-	# entry (e.g. scale_handle, which once silently regressed and killed the gizmo rings)
-	# breaks both the behaviour and the test together. up=+Z (Z up, X/Y floor), cube_axes
-	# (labelled box), scale_handle (Fledermaus gizmo: compass/tilt rings + vertical cone).
-	for (k, v) in pairs(VIEW_GRID_DEFAULTS)
-		get!(vkw, k, v)
-	end
 
 	# Line overlays (`lines=`) carry z in DATA units; the surface is drawn with the
 	# vertical scale `_resolve_zscale` gives, so forward that SAME factor as `line_zfac`
@@ -1781,7 +1776,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 					 axes::Bool=true, grid::Bool=true, offscreen::Bool=false,
 					 saveimg::String="", azimuth::Real=-40.0, elevation::Real=25.0,
 					 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
-					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=true, colorbar::Bool=true,
+					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=SHOW_ROTATION_RINGS, colorbar::Bool=true,
 					 onpick=nothing, pickcolor=(0.83, 0.83, 0.83),
 					 lines=nothing, line_color=nothing, line_width::Real=2.0, L=nothing)
 	lines = L === nothing ? lines : L          # `L` = GMT-style short alias for `lines`

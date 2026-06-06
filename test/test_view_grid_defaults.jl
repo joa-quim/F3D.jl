@@ -1,43 +1,39 @@
-# Regression guard for the view_grid wrapper DEFAULTS (examples/gmt_solids.jl).
+# Regression guard for the rotation-centre gizmo (Fledermaus scale handle: compass/tilt rings
+# + vertical cone) default in examples/gmt_solids.jl.
 #
-# The user-facing `view_grid` turns several extras on by default — notably the Fledermaus
-# scale-handle gizmo (compass/tilt rings + vertical cone). That default once silently
-# regressed (the gizmo rings vanished) and NO test caught it, because the whole gmt_solids.jl
-# wrapper layer was untested — only the low-level `f3d_ext_enable_scale_handle` C binding had
-# coverage (test_f3d_ext.jl), and that kept passing.
+# The gizmo default once silently regressed — view_grid's wrapper stopped flipping it on and
+# the rings vanished — and NO test caught it, because the gmt_solids.jl wrapper layer (the
+# functions users actually call) had zero coverage; only the low-level
+# f3d_ext_enable_scale_handle C binding was tested (test_f3d_ext.jl), and it kept passing.
 #
-# This asserts the SINGLE SOURCE OF TRUTH (`VIEW_GRID_DEFAULTS`) that view_grid applies via a
-# get! loop, plus the applied result, so dropping `scale_handle` breaks the test.
+# Both viewers now bind their `scale_handle` kwarg default to the single const
+# SHOW_ROTATION_RINGS, so the rings are enabled by the EXACT same procedure and cannot desync.
+# This asserts that const is on AND that both viewer signatures actually reference it (a source
+# check: catches someone flipping the const, or hardcoding a different per-viewer default).
 #
 # gmt_solids.jl needs GMT; skip cleanly when GMT isn't installed so the core C-API suite still
 # runs standalone.
 
-@testset "view_grid wrapper defaults (gizmo rings regression)" begin
+@testset "rotation-ring gizmo default (view_grid + view_points)" begin
     if Base.find_package("GMT") === nothing
-        @info "GMT not installed — skipping view_grid defaults regression test"
+        @info "GMT not installed — skipping rotation-ring gizmo default test"
         @test_skip true
     else
-        include(joinpath(@__DIR__, "..", "examples", "gmt_solids.jl"))
+        gmt_solids = joinpath(@__DIR__, "..", "examples", "gmt_solids.jl")
+        include(gmt_solids)
 
-        d = VIEW_GRID_DEFAULTS
-        # The gizmo MUST default ON — this is the exact regression that slipped through.
-        @test d.scale_handle === true
-        @test d.cube_axes === true
-        @test d.up == "+Z"
+        # Single source of truth: the gizmo (rotation rings) is ON by default.
+        @test SHOW_ROTATION_RINGS === true
 
-        # Applied result: empty kwargs must inherit scale_handle=true through the same get!
-        # loop view_grid uses, so the test tracks behaviour, not just the constant.
-        vkw = Dict{Symbol,Any}()
-        for (k, v) in pairs(d)
-            get!(vkw, k, v)
-        end
-        @test vkw[:scale_handle] === true
-
-        # A caller override must still win (defaults never clobber an explicit kwarg).
-        vkw2 = Dict{Symbol,Any}(:scale_handle => false)
-        for (k, v) in pairs(d)
-            get!(vkw2, k, v)
-        end
-        @test vkw2[:scale_handle] === false
+        # Both viewers must take their scale_handle default FROM that const — identical
+        # procedure, no per-viewer divergence. Verified against the source signatures.
+        src = read(gmt_solids, String)
+        @test occursin(r"function\s+_view_fv_impl\b"s, src)
+        @test occursin(r"function\s+view_points\b"s, src)
+        # Each signature binds scale_handle to the shared const (whitespace-tolerant).
+        @test occursin(r"scale_handle::Bool\s*=\s*SHOW_ROTATION_RINGS", src)
+        # ...and there must be NO viewer hardcoding scale_handle to a literal true/false
+        # (that would reintroduce the desync that caused the original regression).
+        @test !occursin(r"scale_handle::Bool\s*=\s*(true|false)\b", src)
     end
 end
