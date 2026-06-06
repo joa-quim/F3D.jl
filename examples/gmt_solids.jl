@@ -538,7 +538,7 @@ per-face colours when present. Blocks until the window is closed, unless `async`
 - `mapexport=""`: one-shot georeferenceable map — forces orthographic top-down +
   offscreen and saves to this file (format from extension, default PNG; `.tiff`
   writes a GeoTIFF when `georef` is set).
-- `savepng=""`: save the current frame to a file (format from extension) without
+- `saveimg=""`: save the current frame to a file (format from extension) without
   forcing top-down.
 - `offscreen=false`: render without opening a window (no interaction; extras off).
 - `georef=nothing`: `(x0,x1,y0,y1,proj)` tuple stamped onto a `.tiff` export to make
@@ -564,7 +564,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 				 size::Tuple{Int,Int}=(1600, 1200), bg=(0.1, 0.1, 0.15),
 				 lights=(), flat::Bool=false, axes::Bool=true,
 				 grid::Bool=true, trihedron::Bool=false, edges::Bool=false,
-				 offscreen::Bool=false, savepng::AbstractString="", mapexport::AbstractString="",
+				 offscreen::Bool=false, saveimg::String="", mapexport::AbstractString="",
 				 azimuth::Real=-40.0, elevation::Real=25.0, topdown::Bool=false,
 				 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
 				 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=false,
@@ -577,9 +577,9 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	savefmt = F3D.PNG
 	if (!isempty(mapexport))
 		topdown = true;  offscreen = true
-		savepng, savefmt = _img_target(mapexport)
-	elseif !isempty(savepng)
-		savepng, savefmt = _img_target(savepng)
+		saveimg, savefmt = _img_target(mapexport)
+	elseif !isempty(saveimg)
+		saveimg, savefmt = _img_target(saveimg)
 	end
 
 	do_drape = !isempty(drape)
@@ -675,7 +675,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 		# baked canvas is already flat fill + lines; any headlight would re-introduce the
 		# grey shading the user does not want.
 		drape_unlit && F3D.f3d_options_set_as_double(opts, "render.light.intensity", Cdouble(0.0))
-	elseif m.ncolors > 0                        # per-face colour palette
+	elseif (m.ncolors > 0)                      # per-face colour palette
 		if _has_inmem_texture()                 # in-memory (gap #1): no temp PNG, survives re-render
 			palimg = F3D.f3d_image_new_params(Cuint(m.ncolors), Cuint(1), Cuint(3), F3D.BYTE)
 			GC.@preserve m F3D.f3d_image_set_content(palimg, pointer(m.palette))
@@ -760,7 +760,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	elevation == 0 || F3D.f3d_camera_elevation(camera, Cdouble(elevation))  # tilt for oblique view
 	F3D.f3d_window_render(window)            # first render
 
-	# Labelled cube axes with coordinates in EVERY figure — incl. offscreen / savepng
+	# Labelled cube axes with coordinates in EVERY figure — incl. offscreen / saveimg
 	# exports (enabled here, before the frame grab, not only on the interactive path).
 	# Needs the f3d_ext DLL; on a stock binary it is silently skipped.
 	if (cube_axes && _has_f3d_ext())
@@ -781,9 +781,9 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# offscreen exports. `line_zfac` matches the surface's vertical scale. Needs f3d_ext.
 	_draw_lines(window, lines, line_color, line_width, line_zfac)
 
-	if !isempty(savepng)                        # grab the rendered frame to a file
+	if !isempty(saveimg)                        # grab the rendered frame to a file
 		img = F3D.f3d_window_render_to_image(window, Cint(0))
-		if georef !== nothing && lowercase(splitext(savepng)[2]) == ".tiff"
+		if georef !== nothing && lowercase(splitext(saveimg)[2]) == ".tiff"
 			# GeoTIFF: build a georeferenced GMTimage from the IN-MEMORY frame and gmtwrite it
 			# (GDAL GTiff). We never gmtread the output -> no Windows file lock. VTK's frame
 			# origin is bottom-left, so flip rows to north-up; pixels are RGB(A)-interleaved.
@@ -798,11 +798,9 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 			Inew = GMT.mat2img(A; x=[Float64(georef[1]), Float64(georef[2])], y=[Float64(georef[3]), Float64(georef[4])])
 			pj = String(georef[5])
 			isempty(pj) || (occursin("+", pj) ? (Inew.proj4 = pj) : (Inew.wkt = pj))
-			GMT.gmtwrite(savepng, Inew)
-			println("saved GeoTIFF ", savepng)
+			GMT.gmtwrite(saveimg, Inew)
 		else
-			F3D.f3d_image_save(img, savepng, savefmt)
-			println("saved ", savepng)
+			F3D.f3d_image_save(img, saveimg, savefmt)
 		end
 	end
 
@@ -908,7 +906,7 @@ function _cone(a::Int, base::Float64, tip::Float64, cr::Float64, nseg::Int)
 end
 
 function add_trihedron!(fv::GMT.GMTfv; len=nothing, lenfrac=(1.05, 1.05, 1.10),
-						rad=nothing, headlen=nothing, nseg::Int=16,
+						rad=NaN, headlen=NaN, nseg::Int=16,
 						anchor=nothing, colors=("#ff3030", "#30c030", "#3060ff"))
 	V = fv.verts
 	vmin = vec(minimum(V, dims = 1))
@@ -928,9 +926,9 @@ function add_trihedron!(fv::GMT.GMTfv; len=nothing, lenfrac=(1.05, 1.05, 1.10),
 	Laxis = len === nothing ? ntuple(a -> lenfrac[a] * ext[a], 3) :
 			len isa Number   ? ntuple(_ -> float(len), 3) :
 							   ntuple(a -> float(len[a]), 3)
-	r  = rad === nothing ? 0.0015 * S : float(rad)      # thin shafts (keyed to model size)
+	r  = isnan(rad) ? 0.0015 * S : float(rad)           # thin shafts (keyed to model size)
 	cr = 4.0 * r                                        # cone base radius
-	hl = headlen === nothing ? 0.04 * S : float(headlen) # arrowhead length, SAME for all axes
+	hl = isnan(headlen) ? 0.04 * S : float(headlen)     # arrowhead length, SAME for all axes
 
 	# --- shafts: 3 boxes, quads --- full length `Laxis`; arrowhead added ON TOP
 	bars = (_box(0.0, Laxis[1], -r, r, -r, r),          # X
@@ -1102,6 +1100,12 @@ function grid2fv(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor::I
 	return tri2fv(D; cmap=cmap, zscale=zscale, vfrac=vfrac, vexag=vexag, isgeog=GMT.isgeog(G), ncolor=ncolor)
 end
 
+# Default extras view_grid turns on unless the caller overrides them. SINGLE SOURCE OF
+# TRUTH — applied by the get! loop in view_grid AND asserted by the "view_grid defaults"
+# testset, so dropping an entry breaks behaviour and test together (the scale_handle gizmo
+# rings once silently regressed because this default went missing, with no test to catch it).
+const VIEW_GRID_DEFAULTS = (up = "+Z", cube_axes = true, scale_handle = true)
+
 """
 	view_grid(G; kwargs...)
 
@@ -1126,10 +1130,9 @@ coloured `GMTfv` -> interactive viewer (or an offscreen export).
 - `geog=false`: force geographic handling.
 
 # Image draping
-- `drape=nothing`: a `GMTimage` to drape over the surface as a texture.
+- `drape=GMTimage()`: a `GMTimage` to drape over the surface as a texture.
 - `drape_clip=false`: when `true`, paint only the grid ∩ image overlap and let
-  `outside` decide the rest. When `false`, the image is stretched over the whole
-  surface.
+  `outside` decide the rest. When `false`, the image is stretched over the whole surface.
 - `outside=:drop`: what to do with the grid area the image does NOT cover
   (`drape_clip=true` only):
 	- `:drop` — crop the grid to the overlap (no resample); rest not shown.
@@ -1149,22 +1152,19 @@ coloured `GMTfv` -> interactive viewer (or an offscreen export).
   offscreen and saves to this file (extension picks the format: `png`/`jpg`/`tif`/
   `bmp`, default `png`). A `.tiff` extension writes a GeoTIFF stamped with the
   grid's range and projection.
-- `savepng=""`: save the current view to a file (any of the formats above), without
-  forcing top-down.
+- `saveimg=""`: save the current view to a file (any of the formats above), without forcing top-down.
 - `topdown=false`: orthographic straight-down, north-up view (georeferenceable).
 - `offscreen=false`: render without opening a window.
 
 # View (forwarded to `view_fv`)
-- `title`, `size=(1600,1200)`, `bg=(0.1,0.1,0.15)`: window title, pixel size,
-  background colour.
+- `title`, `size=(1600,1200)`, `bg=(0.1,0.1,0.15)`: window title, pixel size, background colour.
 - `async=true`: viewer on a worker thread → REPL gets a `ViewHandle` at once
   (`close!(h)`); `false` blocks until the window closes.
 - `lights=()`: vector of light NamedTuples (see `add_lights!`).
 - `azimuth=-40`, `elevation=25`: orbit / tilt the camera (degrees).
 - `up="+Z"`: scene up-direction (defaulted to `"+Z"` so grids lie flat, X,Y floor).
 - `flat=false`: flat (faceted) shading instead of smooth.
-- `axes=true`, `grid=true`: orientation gizmo / f3d floor grid (both forced off
-  under `topdown`).
+- `axes=true`, `grid=true`: orientation gizmo / f3d floor grid (both forced off under `topdown`).
 - `edges=false`, `linewidth=1.0`: draw mesh edges and their width.
 - `trihedron=false`: add an XYZ trihedron to the mesh.
 
@@ -1173,14 +1173,14 @@ coloured `GMTfv` -> interactive viewer (or an offscreen export).
 - `coord_readout=true`: live world X/Y/Z under the cursor.
 - `vscale_drag=true`, `vscale_step=0.01`: Ctrl+left-drag to exaggerate / flatten the
   relief (`vscale_step` per dragged pixel).
-- `scale_handle=false`: Fledermaus-style gizmo at the rotation centre — drag the vertical
-  arrowhead (vertical scale), horizontal arrows (tilt), or compass ring (azimuth).
+- `scale_handle=true`: Fledermaus-style gizmo at the rotation centre — drag the vertical
+  arrowhead (vertical scale), horizontal arrows (tilt), or compass ring (azimuth). ON by
+  default for `view_grid` (pass `scale_handle=false` to hide it).
 
 # Material (forwarded to `view_fv`; `nothing` keeps f3d defaults)
 - `metallic=nothing`: PBR metalness, scalar `0-1`.
 - `roughness=nothing`: PBR roughness, scalar `0-1`.
-- `emissive=nothing`: self-illumination factor — a scalar grey or an `(r,g,b)`
-  tuple (`0-1`).
+- `emissive=nothing`: self-illumination factor — a scalar grey or an `(r,g,b)` tuple (`0-1`).
 
 Any other `view_fv` keyword (e.g. `drape_light`, `drape_emis`, `drape_unlit`,
 `georef`) passes straight through.
@@ -1205,12 +1205,19 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 	# :shade/:shademesh pad the image into the grid bbox by index copy (no gdal). Only
 	# :transparent still uses an alpha warp (drape_clip path in view_fv).
 	# geo footprint (x0,x1,y0,y1,proj) of a grid -> lets view_fv stamp a GeoTIFF on .tiff export.
+
 	geo(g) = (g.range[1], g.range[2], g.range[3], g.range[4], isempty(g.proj4) ? g.wkt : g.proj4)
 	# Grid viewer defaults (caller can override any): lay the surface flat with Z up
 	# (X,Y on the floor) and show the labelled cube axes. These flow on to view_fv.
 	vkw = Dict{Symbol,Any}(kwargs)
-	get!(vkw, :up, "+Z")
-	get!(vkw, :cube_axes, true)
+	# Defaults view_grid turns on unless the caller overrides. SINGLE SOURCE OF TRUTH:
+	# applied here by loop AND asserted by the "view_grid defaults" testset, so dropping an
+	# entry (e.g. scale_handle, which once silently regressed and killed the gizmo rings)
+	# breaks both the behaviour and the test together. up=+Z (Z up, X/Y floor), cube_axes
+	# (labelled box), scale_handle (Fledermaus gizmo: compass/tilt rings + vertical cone).
+	for (k, v) in pairs(VIEW_GRID_DEFAULTS)
+		get!(vkw, k, v)
+	end
 
 	# Line overlays (`lines=`) carry z in DATA units; the surface is drawn with the
 	# vertical scale `_resolve_zscale` gives, so forward that SAME factor as `line_zfac`
@@ -1221,7 +1228,7 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 		get!(vkw, :line_zfac,
 			 _resolve_zscale(zscale, r[2] - r[1], r[4] - r[3], r[6] - r[5], vfrac, GMT.isgeog(Gh), vexag))
 	end
-	if !isempty(drape) && drape_clip
+	if (!isempty(drape) && drape_clip)
 		Gin = isa(G, GMT.GMTgrid) ? G : GMT.gmtread(G)
 		full(g) = grid2fv(g; cmap=cmap, zscale=zscale, vfrac=vfrac, vexag=vexag, ncolor=ncolor,
 						  thickness=thickness, isbase=isbase, downsample=downsample,
@@ -1316,7 +1323,7 @@ things automatically:
   image aspect (coordinate extent if referenced, else pixels).
 - `title="F3D — GMT image"`: window title bar text.
 - `bg=(0.1,0.1,0.15)`: background colour, RGB in `0-1`.
-- `savepng=""`: save the frame to this file (format from extension); empty = none.
+- `saveimg=""`: save the frame to this file (format from extension); empty = none.
 - `offscreen=false`: render without opening a window (no interaction).
 - `async=true`: viewer on a worker thread → REPL gets a `ViewHandle` at once
   (`close!(h)`); `false` blocks until the window closes. Forced off when `offscreen`.
@@ -1327,11 +1334,11 @@ in the interactive window.
 E.g. `view_image(I)` or `view_image(I; decimals=3)`.
 """
 function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::AbstractString="F3D — GMT image", bg=(0.1, 0.1, 0.15),
-		size=nothing, decimals=nothing, offscreen::Bool=false, savepng::String="",
+		size=nothing, decimals=nothing, offscreen::Bool=false, saveimg::String="",
 		lines=nothing, line_color=nothing, line_width::Real=2.0, L=nothing)
 	lines = L === nothing ? lines : L          # `L` = GMT-style short alias for `lines`
 	savefmt = F3D.PNG
-	isempty(savepng) || ((savepng, savefmt) = _img_target(savepng))
+	isempty(saveimg) || ((saveimg, savefmt) = _img_target(saveimg))
 	isgeo = _img_is_georef(I)
 	nr, nc = Base.size(I, 1), Base.size(I, 2)        # rows, cols (kwarg `size` shadows Base.size)
 
@@ -1374,8 +1381,7 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	F3D.f3d_options_set_as_bool(opts, "render.grid.enable", Cint(0))
 	F3D.f3d_options_set_as_bool(opts, "scene.camera.orthographic", Cint(1))   # 2-D
 	F3D.f3d_options_set_as_string(opts, "interactor.style", "2d")             # lock rotation
-	F3D.f3d_options_set_as_double_vector(opts, "render.background.color",
-										 Cdouble[bg[1], bg[2], bg[3]], Csize_t(3))
+	F3D.f3d_options_set_as_double_vector(opts, "render.background.color", Cdouble[bg[1], bg[2], bg[3]], Csize_t(3))
 
 	# Drape the image as an UNLIT texture: emissive = image at full factor and the
 	# diffuse light killed, so the quad shows the exact pixels with no relief shading.
@@ -1396,8 +1402,7 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 			tex,                 Csize_t(length(m.texcoords)),
 			pointer(m.sides),    Csize_t(length(m.sides)),
 			pointer(m.indices),  Csize_t(length(m.indices))))
-		F3D.f3d_scene_add_mesh(scene, mesh) == 1 ||
-			(F3D.f3d_engine_delete(engine); error("f3d_scene_add_mesh failed"))
+		F3D.f3d_scene_add_mesh(scene, mesh) == 1 || (F3D.f3d_engine_delete(engine); error("f3d_scene_add_mesh failed"))
 	end
 
 	# Camera: orthographic, straight above, north up.
@@ -1438,10 +1443,8 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	# 2-D map frame (referenced images only): X bottom + Y left, outward ticks,
 	# decimals chosen so labels are unique. Needs the f3d_ext DLL.
 	if isgeo && _has_f3d_ext()
-		dx = decimals === nothing ? _axis_decimals(x1 - x0) :
-			 (decimals isa Tuple ? Int(decimals[1]) : Int(decimals))
-		dy = decimals === nothing ? _axis_decimals(y1 - y0) :
-			 (decimals isa Tuple ? Int(decimals[2]) : Int(decimals))
+		dx = decimals === nothing ? _axis_decimals(x1 - x0) : (decimals isa Tuple ? Int(decimals[1]) : Int(decimals))
+		dy = decimals === nothing ? _axis_decimals(y1 - y0) : (decimals isa Tuple ? Int(decimals[2]) : Int(decimals))
 		F3D.f3d_ext_enable_image_axes(window, "%.$(dx)f", "%.$(dy)f")
 		F3D.f3d_window_render(window)
 	end
@@ -1450,10 +1453,9 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	# and the view is top-down, so zfac = 1 (z column, if any, is honoured but unseen).
 	_draw_lines(window, lines, line_color, line_width, 1.0)
 
-	if !isempty(savepng)
+	if !isempty(saveimg)
 		img = F3D.f3d_window_render_to_image(window, Cint(0))
-		F3D.f3d_image_save(img, savepng, savefmt);  F3D.f3d_image_delete(img)
-		println("saved ", savepng)
+		F3D.f3d_image_save(img, saveimg, savefmt);  F3D.f3d_image_delete(img)
 	end
 
 	if offscreen
@@ -1723,7 +1725,7 @@ the window is closed (unless `offscreen`).
   `false` blocks until the window closes (and returns the selection).
 - `axes=true`, `grid=true`: orientation gizmo / f3d floor grid.
 - `azimuth=-40`, `elevation=25`: orbit / tilt the camera (degrees).
-- `offscreen=false`, `savepng=""`: render without a window / save the frame
+- `offscreen=false`, `saveimg=""`: render without a window / save the frame
   (format from extension: png/jpg/tif/bmp).
 
 # Extended interactions (need an f3d built with `c/f3d_ext_*.cxx`; a stock DLL warns
@@ -1777,10 +1779,9 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 					 title::AbstractString="F3D — point cloud",
 					 size::Tuple{Int,Int}=(1200, 1000), bg=(0.1, 0.1, 0.15), lights=(),
 					 axes::Bool=true, grid::Bool=true, offscreen::Bool=false,
-					 savepng::AbstractString="", azimuth::Real=-40.0, elevation::Real=25.0,
+					 saveimg::String="", azimuth::Real=-40.0, elevation::Real=25.0,
 					 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
-					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=true,
-				 colorbar::Bool=true,
+					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=true, colorbar::Bool=true,
 					 onpick=nothing, pickcolor=(0.83, 0.83, 0.83),
 					 lines=nothing, line_color=nothing, line_width::Real=2.0, L=nothing)
 	lines = L === nothing ? lines : L          # `L` = GMT-style short alias for `lines`
@@ -1863,7 +1864,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	end
 
 	savefmt = F3D.PNG
-	isempty(savepng) || ((savepng, savefmt) = _img_target(savepng))
+	isempty(saveimg) || ((saveimg, savefmt) = _img_target(saveimg))
 
 	F3D.f3d_engine_autoload_plugins()
 	engine = F3D.f3d_engine_create(Cint(offscreen ? 1 : 0))
@@ -1948,7 +1949,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 		F3D.f3d_window_render(window)
 	end
 
-	# Labelled cube axes with coordinates in EVERY figure — incl. offscreen / savepng
+	# Labelled cube axes with coordinates in EVERY figure — incl. offscreen / saveimg
 	# exports (enabled here, before the frame grab, not only on the interactive path).
 	if cube_axes && _has_f3d_ext()
 		F3D.f3d_ext_enable_cube_axes(window)
@@ -1967,11 +1968,10 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	# the points, so a line's z (data units) lands at the cloud's level. Needs f3d_ext.
 	_draw_lines(window, lines, line_color, line_width, s)
 
-	if !isempty(savepng)
+	if !isempty(saveimg)
 		img = F3D.f3d_window_render_to_image(window, Cint(0))
-		F3D.f3d_image_save(img, savepng, savefmt)
+		F3D.f3d_image_save(img, saveimg, savefmt)
 		F3D.f3d_image_delete(img)
-		println("saved ", savepng)
 	end
 
 	if offscreen
@@ -1992,8 +1992,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 		(rgb=pal, n=ncolor, vmin=cmin, vmax=cmax, fmt="%.$(_axis_decimals(cmax - cmin))f") : nothing
 	disable_extras = _enable_extras(window, opts; cube_axes=cube_axes,   # re-assert (idempotent)
 									coord_readout=coord_readout, vscale_drag=vscale_drag,
-									vscale_step=vscale_step, scale_handle=scale_handle,
-									colorbar=cbar_nt)
+									vscale_step=vscale_step, scale_handle=scale_handle, colorbar=cbar_nt)
 	# Shift+'+' / Shift+'-' grow / shrink the point sprites (the `o` key only cycles type;
 	# plain '+'/'-' stay free for zoom).
 	_has_f3d_ext() && F3D.f3d_ext_enable_sprite_size_keys(window, opts, Cdouble(spritesize))
@@ -2024,7 +2023,7 @@ end
 function main(name::AbstractString="torus"; color::Bool=true, lights=DEMO_LIGHTS, flat::Bool=false,
 			  axes::Bool=true, grid::Bool=true, trihedron::Bool=false)
 	builder=get(SOLIDS, lowercase(name), nothing)
-	if builder === nothing
+	if (builder === nothing)
 		error("unknown solid '$name'. Choose one of: $(join(sort(collect(keys(SOLIDS))), ", "))")
 	end
 	fv = builder()

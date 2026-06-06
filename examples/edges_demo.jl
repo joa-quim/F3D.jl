@@ -56,7 +56,7 @@ Show gap #6 edge control on a coarse terrain grid in an oblique 3-D view.
 - `interactive=false`: render offscreen and save PNG(s) to `outdir`, returning the paths.
 - `interactive=true`:  open a live window (orbit with the mouse; press `q`/Esc to close).
 """
-function edges_demo(; interactive::Bool = false, subset::Bool = false, outdir::AbstractString = tempdir())
+function edges_demo(; interactive::Bool=true, subset::Bool=false, outdir::String=tempdir())
     if !_has_f3d_ext()
         @warn "This libf3d has no f3d_ext edge symbols (stock DLL) — nothing to show."
         return nothing
@@ -97,7 +97,20 @@ function edges_demo(; interactive::Bool = false, subset::Bool = false, outdir::A
 
         if interactive
             println("Opening window — orbit with the mouse, press q/Esc to close.")
-            F3D.f3d_interactor_start(F3D.f3d_engine_get_interactor(e))
+            interactor = F3D.f3d_engine_get_interactor(e)
+            F3D.f3d_interactor_init_commands(interactor)   # q/Esc + default keys
+            F3D.f3d_interactor_init_bindings(interactor)
+            # f3d_interactor_start now takes a delta_time; wrap it GC-safe (VTK blocks the
+            # thread, so Julia's GC must be allowed to run) and stop the event-loop timer
+            # before delete — otherwise a stray OnTimer fires on the freed interactor and
+            # crashes Julia on window close.
+            gc_state = ccall(:jl_gc_safe_enter, Int8, ())
+            try
+                F3D.f3d_interactor_start(interactor, 1.0 / 30.0)
+            finally
+                ccall(:jl_gc_safe_leave, Cvoid, (Int8,), gc_state)
+            end
+            F3D.f3d_interactor_stop(interactor)
             F3D.f3d_engine_delete(e)
             return nothing
         end

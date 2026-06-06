@@ -728,4 +728,9 @@ include("test_scene_from_memory.jl")
 # ============================================================
 include("test_f3d_ext.jl")
 
+# ============================================================
+# view_grid wrapper defaults (gmt_solids.jl); auto-skips when GMT isn't installed
+# ============================================================
+include("test_view_grid_defaults.jl")
+
 end  # top-level testset
