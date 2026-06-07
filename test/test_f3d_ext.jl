@@ -175,6 +175,32 @@ _mesh_ref(p, nm, s, f) = Ref(F3D.f3d_mesh_t(
             F3D.f3d_engine_delete(e)
         end
 
+        @testset "scale-handle gizmo (Fledermaus)" begin
+            e = _engine(); scene = F3D.f3d_engine_get_scene(e); window = F3D.f3d_engine_get_window(e)
+            opts = F3D.f3d_engine_get_options(e)
+            pts = Float32[0,0,0, 1,0,0, 0,0,1, 1,0,1]; nrm = Float32[0,1,0,0,1,0,0,1,0,0,1,0]
+            sd = UInt32[3,3]; fc = UInt32[0,1,2,1,3,2]
+            GC.@preserve pts nrm sd fc F3D.f3d_scene_add_mesh(scene, _mesh_ref(pts, nrm, sd, fc))
+            _set_cam!(window, (0.5,30,0.5), (0.5,0,0.5), (0,0,1))
+            it = F3D.f3d_engine_get_interactor(e); F3D.f3d_interactor_init_commands(it); F3D.f3d_interactor_init_bindings(it)
+            F3D.f3d_window_render(window)
+            @test F3D.f3d_ext_enable_scale_handle(window, opts, Cdouble(0.02)) == 1
+            F3D.f3d_window_render(window)
+            # the gizmo keeps Ctrl+left-drag = vertical scale; test that pixel-free path.
+            # (the gizmo's own props pollute a vspan metric, so assert the model_scale
+            # option the gesture drives instead.)
+            F3D.f3d_interactor_trigger_mouse_position(it, Cdouble(200), Cdouble(350))
+            F3D.f3d_interactor_trigger_mod_update(it, F3D.F3D_INTERACTOR_INPUT_CTRL)
+            F3D.f3d_interactor_trigger_mouse_button(it, F3D.F3D_INTERACTOR_INPUT_PRESS, F3D.F3D_INTERACTOR_MOUSE_LEFT)
+            for y in (250, 150, 50); F3D.f3d_interactor_trigger_mouse_position(it, Cdouble(200), Cdouble(y)); end
+            F3D.f3d_interactor_trigger_mouse_button(it, F3D.F3D_INTERACTOR_INPUT_RELEASE, F3D.F3D_INTERACTOR_MOUSE_LEFT)
+            ms = unsafe_string(F3D.f3d_options_get_as_string_representation(opts, "render.model_scale"))
+            zfac = parse(Float64, split(ms, ",")[end])
+            @test zfac > 1.5            # drag-up exaggerated the vertical scale
+            F3D.f3d_ext_disable_scale_handle(window)
+            F3D.f3d_engine_delete(e)
+        end
+
         @testset "coordinate readout (gap #8)" begin
             e = _engine(); scene = F3D.f3d_engine_get_scene(e); window = F3D.f3d_engine_get_window(e)
             p, nm, s, f = _grid_surface()

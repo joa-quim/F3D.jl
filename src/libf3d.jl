@@ -2142,6 +2142,45 @@ function f3d_ext_disable_vertical_scale_drag(window)
 end
 
 """
+    f3d_ext_enable_scale_handle(window, options, sensitivity)
+
+Show a Fledermaus-style interaction gizmo pinned to the camera focal point (the
+rotation centre). Three left-drag handles:
+
+* the vertical arrowhead cone → vertical scale (`render.model_scale` z); the shaft
+  keeps a fixed length while the cone stretches to show the current exaggeration.
+  Ctrl + left-drag anywhere also still scales.
+* the two horizontal arrows → tilt (camera elevation about the horizontal axis through
+  the focal point).
+* the compass ring band → azimuth (heading rotation about the world vertical;
+  inclination unchanged).
+
+The vertical axis is world-up (leans with the view inclination); the horizontal axis
+follows the camera screen-right, so both axes stay aligned with the window instead of
+spinning as the view orbits.
+
+A billboard label on the axis shows the vertical exaggeration. Drives
+`render.model_scale` through the option (so it survives f3d's per-render push) — pass
+the engine's options handle (from [`f3d_engine_get_options`](@ref)). `f3d_ext` symbol.
+Pass `sensitivity <= 0` for the default (0.01 per pixel). Call after the engine has an
+interactor and a first render. Returns 1 on success, 0 if the window has no
+interactor/renderer/camera yet.
+"""
+function f3d_ext_enable_scale_handle(window, options, sensitivity)
+    ccall((:f3d_ext_enable_scale_handle, libf3d), Cint, (Ptr{f3d_window_t}, Ptr{Cvoid}, Cdouble), window, options, sensitivity)
+end
+
+"""
+    f3d_ext_disable_scale_handle(window)
+
+Remove the scale-handle gizmo (props + observers). Does not reset the model scale;
+set `render.model_scale` back to `(1,1,1)` to undo. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_scale_handle(window)
+    ccall((:f3d_ext_disable_scale_handle, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
     f3d_ext_enable_coord_readout(window)
 
 Show a live readout of the world coordinate under the mouse cursor in a text box at
@@ -2244,17 +2283,21 @@ function f3d_ext_enable_image_axes(window, xfmt::AbstractString = "%.2f", yfmt::
 end
 
 """
-    f3d_ext_enable_colorbar(window, rgb, ncolors, vmin, vmax, title="", fmt="%.1f")
+    f3d_ext_enable_colorbar(window, rgb, ncolors, vmin, vmax, title="", fmt="%.1f"; draggable=false)
 
 Add a vertical colour scale on the right of the window from an ordered RGB palette
 (`rgb` is `ncolors*3` bytes, low→high) mapped onto `[vmin, vmax]`. The C side copies
-the palette immediately. `f3d_ext` symbol — `_has_f3d_ext()`-gated on the caller side.
+the palette immediately. With `draggable=true` the bar is wrapped in a
+`vtkScalarBarWidget`, so it can be dragged and corner-resized with the mouse (needs an
+interactor). `f3d_ext` symbol — `_has_f3d_ext()`-gated on the caller side.
 """
 function f3d_ext_enable_colorbar(window, rgb::Vector{UInt8}, ncolors::Integer,
-        vmin::Real, vmax::Real, title::AbstractString = "", fmt::AbstractString = "%.1f")
+        vmin::Real, vmax::Real, title::AbstractString = "", fmt::AbstractString = "%.1f";
+        draggable::Bool = false)
     GC.@preserve rgb ccall((:f3d_ext_enable_colorbar, libf3d), Cint,
-        (Ptr{f3d_window_t}, Ptr{UInt8}, Cint, Cdouble, Cdouble, Cstring, Cstring),
-        window, pointer(rgb), Cint(ncolors), Cdouble(vmin), Cdouble(vmax), title, fmt)
+        (Ptr{f3d_window_t}, Ptr{UInt8}, Cint, Cdouble, Cdouble, Cstring, Cstring, Cint),
+        window, pointer(rgb), Cint(ncolors), Cdouble(vmin), Cdouble(vmax), title, fmt,
+        Cint(draggable))
 end
 
 """
@@ -2306,6 +2349,56 @@ function f3d_ext_round_points(window, on, unlit = true)
     ccall((:f3d_ext_round_points, libf3d), Cint,
           (Ptr{f3d_window_t}, Cint, Cint),
           window, Cint(on ? 1 : 0), Cint(unlit ? 1 : 0))
+end
+
+"""
+    f3d_ext_enable_sprite_size_keys(window, options, size = 10.0, factor = 1.25)
+
+Bind `Shift+'+'` / `Shift+'-'` to grow / shrink the point sprites at runtime. f3d's `O`
+key cycles the sprite TYPE but never the size, so the non-default splat shapes render at
+the fixed `model.point_sprites.size` (default 10) and look oversized. This observer
+multiplies / divides that option by `factor` per press and re-renders; plain `+`/`-`
+stay free (e.g. for zoom). Layout-independent (matches the shifted character). Needs an
+interactor; pass the engine's options handle. `f3d_ext` symbol. Returns 1 on success, 0
+if there is no interactor.
+"""
+function f3d_ext_enable_sprite_size_keys(window, options, size = 10.0, factor = 1.25)
+    ccall((:f3d_ext_enable_sprite_size_keys, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cvoid}, Cdouble, Cdouble),
+          window, options, Cdouble(size), Cdouble(factor))
+end
+
+"""
+    f3d_ext_disable_sprite_size_keys(window)
+
+Remove the `Shift+'+'`/`'-'` sprite-resize key observer. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_sprite_size_keys(window)
+    ccall((:f3d_ext_disable_sprite_size_keys, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_sprite_zscale_sync(window, options)
+
+Keep point SPRITES at the `render.model_scale` (vertical-scale) locations. f3d applies
+model_scale as an actor transform, which anisotropically DISTORTS gaussian/sphere/circle
+splats; this instead bakes the current model_scale into the sprite point coordinates
+(from a cached original) so the sprites move to the stretched z without deforming.
+Re-applied when the `O` key cycles into a sprite mode and once on enable. Needs an
+interactor; pass the engine's options handle. `f3d_ext` symbol. Returns 1 on success.
+"""
+function f3d_ext_enable_sprite_zscale_sync(window, options)
+    ccall((:f3d_ext_enable_sprite_zscale_sync, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cvoid}), window, options)
+end
+
+"""
+    f3d_ext_disable_sprite_zscale_sync(window)
+
+Remove the sprite vertical-scale sync (and its `O` observer). `f3d_ext` symbol.
+"""
+function f3d_ext_disable_sprite_zscale_sync(window)
+    ccall((:f3d_ext_disable_sprite_zscale_sync, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
 end
 
 """
