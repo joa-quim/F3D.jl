@@ -19,11 +19,13 @@
 #
 # ILLUMINATION — smooth per-vertex normals are computed (Newell's method) and
 # passed to F3D, and lights are configurable via the `lights` keyword of
-# view_fv / main (SCENE / camera / headlight; direction, colour, intensity).
+# view_fv / f3dview (SCENE / camera / headlight; direction, colour, intensity).
 
 using F3D
 using GMT
 using Libdl     # dlopen/dlsym — probe for optional f3d_ext symbols (rubber-band pick)
+
+export f3dview
 
 # SINGLE SOURCE OF TRUTH for the rotation-centre gizmo (Fledermaus scale handle: compass /
 # tilt rings + vertical cone). BOTH viewers — view_grid (via _view_fv_impl) and view_points —
@@ -31,7 +33,141 @@ using Libdl     # dlopen/dlsym — probe for optional f3d_ext symbols (rubber-ba
 # procedure and can never desync. (They once did: _view_fv_impl defaulted false while
 # view_points defaulted true, and the gizmo silently vanished from view_grid.) The actual
 # enable runs through the shared `_enable_extras` helper in both viewers.
-const SHOW_ROTATION_RINGS = true
+
+# kwargs that belong to poly2fv (everything else flows to the viewer).
+const _POLY2FV_KW = (:cmap, :zscale, :vfrac, :vexag, :isgeog, :ncolor, :triangulate)
+_merge_points(D) = (length(D) == 1) ? D[1] : GMT.mat2ds(reduce(vcat, (d.data for d in D)))
+
+"""
+	f3dview(x; kwargs...)
+
+Single front door to the F3D viewers: dispatch on the type of `x` (or, for a
+`String`, its content) and forward to the matching specialised viewer. Every
+`kwargs...` is passed straight through, so **the keywords are those of the viewer
+that ends up handling `x`** — see each one's own docstring.
+
+# Dispatch
+| `x` | viewer | notes |
+|-----|--------|-------|
+| `GMTgrid` | [`view_grid`](@ref) | triangulated surface from a grid |
+| `GMTfv` | [`view_fv`](@ref) | a Faces–Vertices solid / mesh |
+| `GMTimage` | [`view_image`](@ref) | image as a flat textured quad |
+| `GMTdataset` | sniff `.geom` | see below |
+| `Vector{<:GMTdataset}` | sniff `.geom` of the 1st | points are merged into one cloud |
+| `String` | see below | grid file, `"grid"`/`"peaks"` demo, or a named solid |
+
+# `GMTdataset` geometry
+The dataset's WKB `.geom` decides the viewer (falling back, when `.geom` is unset,
+to closure — a ring whose first xy equals its last is treated as a polygon):
+- **point / multipoint** → [`view_points`](@ref) (a coloured point cloud).
+- **line** → [`view_lines`](@ref) (3-D polylines, needs the `f3d_ext` DLL).
+- **polygon** → [`poly2fv`](@ref) → [`view_fv`](@ref). One mesh face per polygon,
+  any corner count; pass `triangulate=true` for concave / non-planar polygons.
+  The `poly2fv` keywords (`cmap, zscale, vfrac, vexag, isgeog, ncolor, triangulate`)
+  are routed to it; all other keywords go to `view_fv`.
+
+# `String`
+`f3dview("file.grd")` opens a grid file (anything `GMT` can read); `"grid"` or
+`"peaks"` shows the `GMT.peaks()` demo; otherwise the name is looked up in the
+`SOLIDS` registry — the primitives `cube, sphere, torus, cylinder, icosahedron,
+octahedron, dodecahedron, tetrahedron` and the generators `revolve, loft, extrude`
+(`keys(SOLIDS)` for the live list).
+
+A named solid takes **the parameters of its GMT generator** (`cube`, `sphere`,
+`torus`, `cylinder`, `revolve`, …) — any kwarg that is NOT a viewer keyword is
+forwarded straight to the generator, with the generator's **own defaults**
+(nothing is restated here). Viewer keywords (`flat`, `azimuth`, `offscreen`, …)
+go to the viewer:
+```julia
+f3dview("cube")                       # the generator's default cube()
+f3dview("cube"; r = 3)                # r = circumradius (centre→vertex), side = 2r/√3
+f3dview("sphere"; n = 4)              # sphere's own `n` (subdivision); r stays default
+f3dview("torus"; R = 8, nx = 200, flat = true, azimuth = 30)   # geom -> torus, flat/azimuth -> viewer
+f3dview("revolve"; curve = mycurve)   # your own profile (else a demo profile)
+f3dview("extrude"; shape = mypoly, h = 2)
+```
+Generators that have a REQUIRED positional with no default (`cylinder` r,h;
+`revolve` curve; `loft` C1,C2; `extrude` shape,h) fall back to a demo sample when
+you omit it. A named solid is z-ramp coloured (`color=true`) and lit with `DEMO_LIGHTS`.
+
+# Examples
+```julia
+f3dview(GMT.peaks(150))							# a grid surface
+f3dview(I)										# a GMTimage
+f3dview(G; drape=I, drape_clip=true, outside=:shademesh)	# image draped on a grid
+f3dview(D; color=:z, pointsize=3)				# a point cloud coloured by z
+f3dview("torus");  f3dview("revolve")			# a named GMT solid / generator demo
+f3dview(torus(r=2, R=6))						# or hand in your own GMTfv directly
+```
+See also [`view_grid`](@ref), [`view_points`](@ref), [`view_fv`](@ref),
+[`view_image`](@ref), [`view_lines`](@ref).
+"""
+f3dview(G::GMT.GMTgrid;  kwargs...) = view_grid(G;  kwargs...)
+f3dview(I::GMT.GMTimage; kwargs...) = view_image(I; kwargs...)
+
+# A bare GMTfv (e.g. `f3dview(torus())`) carries no per-face colour, so — like the
+# named-solid path `f3dview("torus")` — z-ramp colour it and light it with DEMO_LIGHTS
+# by default. `have_color` skips fv's that a real GMT producer already coloured
+# (`flatfv`, `poly2fv`, ...); pass `color=false` to opt out.
+function f3dview(fv::GMT.GMTfv; color::Bool=true, lights=DEMO_LIGHTS, kwargs...)
+	color && !have_color(fv) && colorize_by_z!(fv)
+	return view_fv(fv; lights=lights, kwargs...)
+end
+
+function f3dview(D::GMT.GMTdataset; kwargs...)
+	k = _ds_kind(D)
+	(k === :points) && return view_points(D; kwargs...)
+	(k === :lines)  && return view_lines(D; kwargs...)
+	pk = filter(p -> p.first in _POLY2FV_KW, kwargs)          # polys -> mesh
+	vk = filter(p -> !(p.first in _POLY2FV_KW), kwargs)
+	return view_fv(poly2fv([D]; pk...); vk...)
+end
+
+function f3dview(D::Vector{<:GMT.GMTdataset}; kwargs...)
+	isempty(D) && error("empty GMTdataset vector")
+	k = _ds_kind(D[1])
+	(k === :points) && return view_points(_merge_points(D); kwargs...)
+	(k === :lines)  && return view_lines(D; kwargs...)
+	pk = filter(p -> p.first in _POLY2FV_KW, kwargs)
+	vk = filter(p -> !(p.first in _POLY2FV_KW), kwargs)
+	return view_fv(poly2fv(D; pk...); vk...)
+end
+
+# String: a grid file path, the `grid`/`peaks` demo, or a named solid from SOLIDS.
+# A named solid takes ITS OWN parameters (e.g. `f3dview("cube"; r=3)`,
+# `f3dview("torus"; R=8, nx=200)`). Routing is by the VIEWER's keyword set: a kwarg that
+# is a view_fv keyword goes to the viewer, EVERY OTHER kwarg goes to the solid builder,
+# which forwards it untouched to the GMT generator (so the generator's own defaults
+# stand — we never restate them). `color=true` runs the demo z-ramp on the solid.
+# (`_view_fv_impl`'s keyword set is read at call time — it is defined later in this file.)
+_view_fv_kw() = (Base.kwarg_decl(only(methods(_view_fv_impl)))..., :async)
+function f3dview(name::String; color::Bool=true, lights=DEMO_LIGHTS, kwargs...)
+	lname = lowercase(name)
+	(lname in ("grid", "peaks")) && return view_grid(GMT.peaks(); kwargs...)
+	isfile(name)                 && return view_grid(name; kwargs...)
+	builder = get(SOLIDS, lname, nothing)
+	(builder === nothing) &&
+		error("unknown solid '$name'. Choose one of: $(join(sort(collect(keys(SOLIDS))), ", "))")
+	vkeys = _view_fv_kw()
+	bk = filter(p -> !(p.first in vkeys), kwargs)            # solid params -> generator
+	vk = filter(p ->  (p.first in vkeys), kwargs)            # viewer kwargs -> view_fv
+	fv = builder(; bk...)
+	color && colorize_by_z!(fv)
+	return view_fv(fv; title="F3D — GMT $name", lights=lights, vk...)
+end
+
+# Colour comes from `fv.color` (GMT `-G` strings). Real GMT producers fill it —
+# e.g. `flatfv(image, ...)` builds an FV from an RGB image, one `-G#rrggbb` per
+# face, so `view_fv(flatfv("pic.png", shape=:circle))` is coloured for free.
+# `colorize_by_z!` here is only a demo filler for the plain solids.
+#
+# Illumination: normals are computed in `fv_to_mesh`. Default `flat=false` gives
+# smooth shading (averaged per-vertex normals, `compute_vertex_normals`);
+# `flat=true` gives faceted shading (one Newell face normal per face, split
+# verts). Lights are set via the `lights` keyword — e.g.
+#   view_fv(fv; flat=true, lights=[(; type=:scene, direction=(-1,-1,-1), intensity=1.3)])
+# With `lights=()` F3D falls back to its default headlight.
+# CLI: `julia gmt_solids.jl cube flat`.
 
 # ---------------------------------------------------------------------------
 # GMT "-G" colour string -> (r,g,b) UInt8
@@ -278,7 +414,7 @@ end
 # ---------------------------------------------------------------------------
 function write_palette_png(palette::Vector{UInt8}, ncolors::Int)
 	img = F3D.f3d_image_new_params(Cuint(ncolors), Cuint(1), Cuint(3), F3D.BYTE)
-	img == C_NULL && error("failed to create palette image")
+	(img == C_NULL) && error("failed to create palette image")
 	path = joinpath(tempdir(), "f3d_palette_$(getpid()).png")
 	GC.@preserve palette begin
 		F3D.f3d_image_set_content(img, pointer(palette))
@@ -289,7 +425,7 @@ function write_palette_png(palette::Vector{UInt8}, ncolors::Int)
 end
 
 # ---------------------------------------------------------------------------
-# Georeferenced drape, NO gdal: place `I` onto the [x0,x1]×[y0,y1] bbox at its TRUE
+# Georeferenced drape: place `I` onto the [x0,x1]×[y0,y1] bbox at its TRUE
 # geographic position, with an ALPHA band that is 0 outside the image footprint, by
 # index copy at the image's own increment (same transpose/orientation as `drape_pad`).
 # Sampling this canvas with the bbox UV paints only the grid ∩ image overlap; the rest
@@ -418,6 +554,28 @@ mutable struct ViewHandle
 end
 ViewHandle(t, i, o) = ViewHandle(t, i, o, Ref{Any}(nothing))
 
+# Registry of async viewer windows still on screen. Two LIVE f3d engines at once race
+# VTK/GLEW process-global GL state during the second window's context init -> the first
+# window's running event loop hits a write to read-only memory => ReadOnlyMemoryError in
+# f3d_interactor_start. We can't serialise setup-of-2 against running-of-1 (window 1 is
+# parked inside the blocking native start(), holding no lock), so we forbid a second live
+# window instead. Lazy global (NOT top-level const) so a partial Revise reload is safe —
+# same reason as the pick refs below.
+_open_views() = (@isdefined(_OPEN_VIEWS) || (global _OPEN_VIEWS = ViewHandle[]); _OPEN_VIEWS)
+
+# Cheap early-out for the public viewers: if a window is already open, warn and hand back
+# the live handle BEFORE any (expensive) geometry build. Only async on-screen calls can
+# collide — blocking/offscreen never spawn a second engine. Returns the handle to return
+# early, or `nothing` to proceed. (_async_view re-checks as a backstop for direct callers.)
+function _busy_view(; async=true, offscreen=false)
+	(async && !offscreen) || return nothing
+	reg = _open_views();  filter!(isopen, reg)
+	isempty(reg) && return nothing
+	@warn "An F3D window is already open; close it (close!(h) or its X button) before \
+		   opening another. Returning the existing window."
+	return reg[end]
+end
+
 """
 	selection(h::ViewHandle)
 
@@ -465,11 +623,66 @@ function _interactor_start_gcsafe(interactor, dt)
 	end
 end
 
+# The raytracing build of the f3d DLL ships WITHOUT ospray_module_cpu, so F3D's
+# default 'R'/'Shift+R' key bindings (toggle raytracing / denoiser) load a missing
+# OSPRay module and hard-crash Julia (EXCEPTION_ACCESS_VIOLATION). Scan the live
+# binds and drop every one whose documentation mentions "raytracing". Call AFTER
+# f3d_interactor_init_bindings.
+function _disable_raytracing_bindings(interactor)
+	interactor == C_NULL && return
+	cnt  = Ref{Cint}(0)
+	arr  = F3D.f3d_interactor_get_binds(interactor, cnt)
+	arr == C_NULL && return
+	try
+		binds = unsafe_wrap(Array, arr, Int(cnt[]))
+		doc   = Ref{F3D.f3d_binding_documentation_t}()
+		for b in binds
+			rb = Ref(b)
+			F3D.f3d_interactor_get_binding_documentation(interactor, rb, doc)
+			docstr = GC.@preserve doc unsafe_string(
+				Ptr{Cchar}(Base.unsafe_convert(Ptr{F3D.f3d_binding_documentation_t}, doc)))
+			occursin(r"raytrac"i, docstr) && F3D.f3d_interactor_remove_binding(interactor, rb)
+		end
+	finally
+		F3D.f3d_interactor_free_bind_array(arr)
+	end
+	return
+end
+
+# Primary-monitor pixel size (Windows). SM_CXSCREEN=0, SM_CYSCREEN=1.
+_screen_size() = (Int(ccall((:GetSystemMetrics, "user32"), Cint, (Cint,), 0)),
+				  Int(ccall((:GetSystemMetrics, "user32"), Cint, (Cint,), 1)))
+
+# Place the on-screen window: width = 60% of screen, centered horizontally, top at 3.5%
+# from the top. Height keeps the requested window's aspect ratio (`win` = (w,h) just set),
+# clamped so it doesn't run off the bottom. SKIPS offscreen windows so the savepng output
+# resolution is untouched. `win` is the (width,height) tuple passed to f3d_window_set_size.
+function _place_window(window, win)
+	(Sys.iswindows() && window != C_NULL) || return
+	F3D.f3d_window_is_offscreen(window) != 0 && return
+	sw, sh = _screen_size()
+	(sw > 0 && sh > 0) || return
+	w = round(Int, 0.60 * sw)
+	y = round(Int, 0.035 * sh)
+	h = clamp(round(Int, w * win[2] / win[1]), 1, sh - y)
+	x = (sw - w) ÷ 2
+	F3D.f3d_window_set_size(window, Cint(w), Cint(h))
+	F3D.f3d_window_set_position(window, Cint(x), Cint(y))
+	return
+end
+
 # Run the blocking viewer `impl(ch)` on a worker thread; VTK's GL context AND the platform
 # message pump must live on ONE thread, so the WHOLE engine/window/interactor lifecycle
 # runs there. `impl` publishes its interactor pointer into `ch` once initialised, letting
 # the REPL get a ViewHandle (→ `close!`) while the window stays interactive.
 function _async_view(impl; sel::Ref{Any}=Ref{Any}(nothing))
+	reg = _open_views()
+	filter!(isopen, reg)        # drop windows the user already closed (X button or close!)
+	if !isempty(reg)            # a second LIVE engine crashes VTK -> refuse, but gracefully
+		@warn "An F3D window is already open; close it (close!(h) or its X button) before \
+			   opening another. Returning the existing window."
+		return reg[end]
+	end
 	ch = Channel{Ptr{Cvoid}}(1)
 	h = ViewHandle(@task(nothing), C_NULL, true, sel)   # placeholder task; filled below
 	h.task = Threads.@spawn try
@@ -490,6 +703,7 @@ function _async_view(impl; sel::Ref{Any}=Ref{Any}(nothing))
 	catch                               # channel closed before publish (offscreen, or error)
 		istaskfailed(h.task) && fetch(h.task)   # surface the real error
 	end
+	istaskfailed(h.task) || push!(reg, h)       # track a window that actually started
 	return h
 end
 
@@ -517,8 +731,9 @@ per-face colours when present. Blocks until the window is closed, unless `async`
 
 # Shading & decoration
 - `flat=false`: flat (faceted) shading instead of smooth normals.
-- `edges=false`: draw the mesh wireframe edges.
-- `linewidth=1.0`: edge line width in pixels (with `edges=true`).
+- mesh wireframe edges: toggle live with the `'e'` hotkey (no kwarg). The only
+  programmatic use is `view_grid(...; outside=:shademesh)`, which turns edges on
+  for the grid area an image drape does NOT cover.
 - `axes=true`: show the corner orientation gizmo (forced off under `topdown`).
 - `grid=true`: show f3d's floor grid at the bbox bottom = cube-axes floor (forced
   off under `topdown`).
@@ -570,17 +785,17 @@ view_fv(fv::GMT.GMTfv; async::Bool=true, kwargs...) =
 function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractString="F3D — GMT solid",
 				 size::Tuple{Int,Int}=(1600, 1200), bg=(0.1, 0.1, 0.15),
 				 lights=(), flat::Bool=false, axes::Bool=true,
-				 grid::Bool=true, edges::Bool=false,
+				 grid::Bool=true, _edges::Bool=false,
 				 offscreen::Bool=false, saveimg::String="", mapexport::AbstractString="",
 				 azimuth::Real=-40.0, elevation::Real=25.0, topdown::Bool=false,
-				 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
-				 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=SHOW_ROTATION_RINGS,
+				 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true, floor::Bool=false,
+				 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=true,
 				 drape::GMT.GMTimage=GMT.GMTimage(), drape_clip::Bool=false,
 				 drape_emis::GMT.GMTimage=GMT.GMTimage(),
-				 drape_light::Real=1.0, drape_unlit::Bool=false, linewidth::Real=1.0,
+				 drape_light::Real=1.0, drape_unlit::Bool=false, _edge_width::Real=1.0,
 				 metallic=NaN, roughness=NaN, emissive=nothing, georef=nothing, colorbar=nothing,
 				 lines=nothing, line_color=nothing, line_width::Real=2.0, line_zfac::Real=1.0, L=nothing)
-	lines = L === nothing ? lines : L          # `L` = GMT-style short alias for `lines`
+	lines = (L === nothing) ? lines : L          # `L` = GMT-style short alias for `lines`
 	savefmt = F3D.PNG
 	if (!isempty(mapexport))
 		topdown = true;  offscreen = true
@@ -608,9 +823,10 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 		end
 		ar   = (xmx - xmn) / max(ymx - ymn, eps(Float32))         # Δx/Δy
 		long = max(size[1], size[2])
-		win  = ar >= 1 ? (long, max(round(Int, long / ar), 1)) : (max(round(Int, long * ar), 1), long)
+		win  = (ar >= 1) ? (long, max(round(Int, long / ar), 1)) : (max(round(Int, long * ar), 1), long)
 	end
 	F3D.f3d_window_set_size(window, Cint(win[1]), Cint(win[2]))
+	_place_window(window, win)
 	F3D.f3d_window_set_window_name(window, title)
 
 	opts = F3D.f3d_engine_get_options(engine)
@@ -618,11 +834,18 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# flat (X,Y on the floor, Z vertical); use set_as_string_representation — plain
 	# set_as_string CRASHES on the `direction` option type.
 	up === nothing || F3D.f3d_options_set_as_string_representation(opts, "scene.up_direction", string(up))
-	F3D.f3d_options_set_as_bool(opts, "render.show_edges", Cint(edges ? 1 : 0))
-	edges && F3D.f3d_options_set_as_double(opts, "render.line_width", Cdouble(linewidth))
+	# Mesh wireframe is normally a live `'e'` toggle, NOT a kwarg. `_edges` is the one
+	# internal exception: view_grid's outside=:shademesh turns it on so the grid area an
+	# image drape does not cover shows structure. (Sets render.show_edges, same as 'e'.)
+	F3D.f3d_options_set_as_bool(opts, "render.show_edges", Cint(_edges ? 1 : 0))
+	_edges && F3D.f3d_options_set_as_double(opts, "render.line_width", Cdouble(_edge_width))
 	F3D.f3d_options_set_as_bool(opts, "ui.scalar_bar", Cint(0))
 	(axes && !topdown) && F3D.f3d_options_set_as_bool(opts, "ui.axis", Cint(1))  # gizmo; off for map export
-	if (grid && !topdown)								# grid at the model's bbox bottom
+	# Floor grid at the model's bbox bottom. Suppressed when an image is draped: its
+	# lines read THROUGH the flat parts of the relief (which sit at z=zmin, the floor
+	# level) and make the draped surface look see-through. The draped picture is the
+	# focus anyway, so the floor grid is just noise there.
+	if (grid && !topdown && !do_drape)
 		F3D.f3d_options_set_as_bool(opts, "render.grid.enable", Cint(1))   # (z=zmin) = the cube
 		F3D.f3d_options_set_as_bool(opts, "render.grid.absolute", Cint(0)) # axes floor, NOT z=0
 	end
@@ -637,7 +860,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# metallic, roughness: scalars 0-1. emissive: scalar grey or (r,g,b) factor (0-1).
 	isnan(metallic) || F3D.f3d_options_set_as_double(opts, "model.material.metallic",  Cdouble(metallic))
 	isnan(roughness) || F3D.f3d_options_set_as_double(opts, "model.material.roughness", Cdouble(roughness))
-	if emissive !== nothing
+	if (emissive !== nothing)
 		ef = emissive isa Real ? Cdouble[emissive, emissive, emissive] :
 								 Cdouble[emissive[1], emissive[2], emissive[3]]
 		F3D.f3d_options_set_as_double_vector(opts, "model.emissive.factor", ef, Csize_t(3))
@@ -651,8 +874,8 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	if do_drape                                 # external image draped over surface
 		palette_path = joinpath(tempdir(), "f3d_drape_$(getpid()).png")
 		if drape_clip                           # honour image coords: paint only the overlap
-			gx0, gx1 = extrema(@view fvm.verts[:, 1])
-			gy0, gy1 = extrema(@view fvm.verts[:, 2])
+			gx0, gx1 = extrema(@view fv.verts[:, 1])
+			gy0, gy1 = extrema(@view fv.verts[:, 2])
 			GMT.gmtwrite(palette_path, drape_to_bbox(drape, gx0, gx1, gy0, gy1))
 			# warped canvas has an alpha band (0 outside the image) — enable blending
 			# so the non-overlap area reads as transparent, not opaque black.
@@ -740,8 +963,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 		# sentinel bg, measure how far the data falls short of each edge, then zoom IN by that
 		# factor so the data fills the frame exactly (no border, no crop). min() over both
 		# axes guarantees we never over-zoom into a crop.
-		F3D.f3d_options_set_as_double_vector(opts, "render.background.color",
-											 Cdouble[1.0, 0.0, 1.0], Csize_t(3))
+		F3D.f3d_options_set_as_double_vector(opts, "render.background.color", Cdouble[1.0, 0.0, 1.0], Csize_t(3))
 		F3D.f3d_window_render(window)
 		cimg = F3D.f3d_window_render_to_image(window, Cint(0))
 		cw = Int(F3D.f3d_image_get_width(cimg));  ch = Int(F3D.f3d_image_get_height(cimg))
@@ -770,7 +992,20 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# exports (enabled here, before the frame grab, not only on the interactive path).
 	# Needs the f3d_ext DLL; on a stock binary it is silently skipped.
 	if (cube_axes && _has_f3d_ext())
-		F3D.f3d_ext_enable_cube_axes(window)
+		# Floor plane is OFF by default (it is semi-transparent and, where the relief is flat
+		# at z=zmin, reads THROUGH the surface). `floor=true` turns it back on — the caller's
+		# choice. Edges + tick labels always on.
+		F3D.f3d_ext_enable_cube_axes(window; floor = floor)
+		F3D.f3d_window_render(window)
+	end
+
+	# Rotation-centre gizmo (Fledermaus scale handle: compass / tilt rings + cone) in EVERY
+	# figure incl. offscreen / saveimg exports — enabled here, before the frame grab, so it
+	# is captured (it is ALSO re-asserted on the interactive path via _enable_extras, which is
+	# idempotent: f3d_ext_enable_scale_handle tears down any prior gizmo first). The live-only
+	# extras (coord readout, vscale drag) stay out of static exports. Needs the f3d_ext DLL.
+	if (scale_handle && _has_f3d_ext())
+		F3D.f3d_ext_enable_scale_handle(window, opts, Cdouble(vscale_step))
 		F3D.f3d_window_render(window)
 	end
 
@@ -778,8 +1013,8 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# fmt]) built by the caller from the colouring palette + value range. In every
 	# figure incl. offscreen exports. Needs the f3d_ext DLL.
 	if (colorbar !== nothing && _has_f3d_ext())
-		F3D.f3d_ext_enable_colorbar(window, colorbar.rgb, colorbar.n, colorbar.vmin,
-			colorbar.vmax, get(colorbar, :title, ""), get(colorbar, :fmt, "%.1f"))
+		F3D.f3d_ext_enable_colorbar(window, colorbar.rgb, colorbar.n, colorbar.vmin, colorbar.vmax,
+		                            get(colorbar, :title, ""), get(colorbar, :fmt, "%.1f"))
 		F3D.f3d_window_render(window)
 	end
 
@@ -789,7 +1024,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 
 	if !isempty(saveimg)                        # grab the rendered frame to a file
 		img = F3D.f3d_window_render_to_image(window, Cint(0))
-		if georef !== nothing && lowercase(splitext(saveimg)[2]) == ".tiff"
+		if ((georef !== nothing) && (lowercase(splitext(saveimg)[2]) == ".tiff"))
 			# GeoTIFF: build a georeferenced GMTimage from the IN-MEMORY frame and gmtwrite it
 			# (GDAL GTiff). We never gmtread the output -> no Windows file lock. VTK's frame
 			# origin is bottom-left, so flip rows to north-up; pixels are RGB(A)-interleaved.
@@ -819,15 +1054,16 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
+	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
 	# Extended interactions (need a rebuilt f3d_ext DLL): labelled cube axes,
 	# coordinate readout, Ctrl+left-drag vertical exaggeration. Enabled after the
 	# render above so the cube axes can capture the data bounds.
 	disable_extras = _enable_extras(window, opts; cube_axes=cube_axes,   # re-assert (idempotent)
-									coord_readout=coord_readout, vscale_drag=vscale_drag,
-									vscale_step=vscale_step, scale_handle=scale_handle,
-									colorbar=colorbar)   # swap the static bar for a draggable one
-	_handle_chan === nothing || put!(_handle_chan, interactor)   # async: let the REPL close! us
-	_interactor_start_gcsafe(interactor, 1.0 / 30.0)    # blocks until window closed (GC-safe)
+	                                coord_readout=coord_readout, vscale_drag=vscale_drag,
+                                    vscale_step=vscale_step, scale_handle=scale_handle,
+                                    colorbar=colorbar, cube_floor=floor)	# swap the static bar for a draggable one
+	_handle_chan === nothing || put!(_handle_chan, interactor)	# async: let the REPL close! us
+	_interactor_start_gcsafe(interactor, 1.0 / 30.0)			# blocks until window closed (GC-safe)
 
 	# f3d's start() registers a repeating Win32 timer but does NOT kill it when the loop
 	# exits (only stop() does) -> a stray WM_TIMER can hit vtkWin32RenderWindowInteractor::
@@ -835,8 +1071,8 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	# the interactor first (DestroyTimer) before tearing the scene/engine down.
 	F3D.f3d_interactor_stop(interactor)
 	disable_extras()
-	colorbar !== nothing && _has_f3d_ext() && F3D.f3d_ext_disable_colorbar(window)
-	lines === nothing || !_has_f3d_ext() || F3D.f3d_ext_clear_lines(window)
+	(colorbar !== nothing) && _has_f3d_ext() && F3D.f3d_ext_disable_colorbar(window)
+	(lines === nothing) || !_has_f3d_ext() || F3D.f3d_ext_clear_lines(window)
 	for f in tmp_files; rm(f; force=true); end   # delete drape temp PNGs only now (window closed)
 	F3D.f3d_scene_clear(scene)        # drop actors before GL teardown -> avoids close-time AV in engine_delete
 	F3D.f3d_engine_delete(engine)
@@ -864,32 +1100,56 @@ function colorize_by_z!(fv::GMT.GMTfv)
 			# simple blue -> red ramp
 			rr = round(Int, 255 * t);  bb = round(Int, 255 * (1 - t));  gg = round(Int, 80 + 100 * (1 - abs(2t - 1)))
 			cols[r] = string("-G#", lpad(string(rr, base=16), 2, '0'),
-									lpad(string(gg, base=16), 2, '0'),
-									lpad(string(bb, base=16), 2, '0'))
+			                        lpad(string(gg, base=16), 2, '0'),
+			                        lpad(string(bb, base=16), 2, '0'))
 		end
 		fv.color[g] = cols
 	end
 	return fv
 end
 
-# Catalogue of solids to demo. Each builds and returns a GMTfv.
-const SOLIDS = Dict(
-	"icosahedron" => () -> icosahedron(1.0),
-	"octahedron"  => () -> octahedron(1.0),
-	"dodecahedron"=> () -> dodecahedron(1.0),
-	"tetrahedron" => () -> tetrahedron(1.0),
-	"cube"        => () -> cube(1.0),
-	"sphere"      => () -> sphere(1.0, n=3),
-	"torus"       => () -> torus(r=2.0, R=5.0),
-	"cylinder"    => () -> cylinder(1.0, 3.0),
+# Default demo profiles for the parametric generators (used when the caller gives none).
+_demo_revolve_curve() = (x = collect(range(0, 2pi, length=15)) .+ 1; [x zeros(length(x)) -cos.(x)])
+function _demo_loft_curves()                       # circle base -> 6-lobe star top
+	t = range(0, 2pi, 75);  r = 5.0
+	C1 = [r .* cos.(t) r .* sin.(t) zeros(length(t))]
+	f  = tt -> r + 2.0 * sin(6tt)
+	C2 = stack([(f(tt) * cos(tt), f(tt) * sin(tt), 3.0) for tt in t])'
+	return C1, C2
+end
+function _demo_extrude_shape()                     # 5-point star outline (Mx2)
+	a  = range(pi/2, 2pi + pi/2, 11)[1:10]
+	rr = [isodd(k) ? 2.0 : 0.8 for k in 1:10]
+	return [rr .* cos.(a) rr .* sin.(a)]
+end
+
+# Catalogue of solids. Each entry forwards to its GMT generator, PASSING THROUGH every
+# kwarg untouched so the generator's OWN defaults stand (we never restate them here). An
+# optional positional argument uses a `missing` sentinel: omit it and the generator's
+# default is used; give it and it is passed positionally. Only a generator with a
+# REQUIRED positional that has no default (cylinder r/h, revolve curve, loft C1/C2,
+# extrude shape/h) carries a demo value — that is sample data, not a default override.
+# f3dview routes a kwarg here when it is NOT one of the viewer's keywords (see f3dview).
+const SOLIDS = Dict{String,Function}(
+	# closed primitives — `r` (optional) is the circumradius (centre→vertex), not the side
+	"icosahedron" => (; r=missing, kw...) -> ismissing(r) ? icosahedron(; kw...) : icosahedron(r; kw...),
+	"octahedron"  => (; r=missing, kw...) -> ismissing(r) ? octahedron(; kw...)  : octahedron(r; kw...),
+	"dodecahedron"=> (; r=missing, kw...) -> ismissing(r) ? dodecahedron(; kw...) : dodecahedron(r; kw...),
+	"tetrahedron" => (; r=missing, kw...) -> ismissing(r) ? tetrahedron(; kw...) : tetrahedron(r; kw...),
+	"cube"        => (; r=missing, kw...) -> ismissing(r) ? cube(; kw...)        : cube(r; kw...),
+	"sphere"      => (; r=missing, kw...) -> ismissing(r) ? sphere(; kw...)      : sphere(r; kw...),
+	"torus"       => (; kw...)            -> torus(; kw...),                       # all-keyword
+	# generators / required positionals — demo SAMPLE data only; optional kwargs pass through
+	"cylinder"    => (; r=1.0, h=3.0, kw...)                -> cylinder(r, h; kw...),
+	"revolve"     => (; curve=_demo_revolve_curve(), kw...) -> revolve(curve; kw...),
+	"loft"        => (; C1=_demo_loft_curves()[1], C2=_demo_loft_curves()[2], kw...) -> loft(C1, C2; kw...),
+	"extrude"     => (; shape=_demo_extrude_shape(), h=1.0, kw...) -> extrude(shape, h; kw...),
 )
 
 # A simple two-source rig: a warm key light from upper-right-front and a dim
 # cool fill from the left, both fixed in the world (SCENE lights).
-const DEMO_LIGHTS = (
-	(; type=:scene, direction=(-1.0, -1.0, -1.0), intensity=1.3, color=(1.0, 0.96, 0.9)),
-	(; type=:scene, direction=( 1.0,  0.3,  0.2), intensity=0.4, color=(0.8, 0.85, 1.0)),
-)
+const DEMO_LIGHTS = ((; type=:scene, direction=(-1.0, -1.0, -1.0), intensity=1.3, color=(1.0, 0.96, 0.9)),
+                     (; type=:scene, direction=( 1.0,  0.3,  0.2), intensity=0.4, color=(0.8, 0.85, 1.0)))
 
 # ---------------------------------------------------------------------------
 # Grid bridge: GMT.grid2tri(G) -> GMTfv -> F3D
@@ -1063,7 +1323,8 @@ coloured `GMTfv` -> interactive viewer (or an offscreen export).
 - `up="+Z"`: scene up-direction (defaulted to `"+Z"` so grids lie flat, X,Y floor).
 - `flat=false`: flat (faceted) shading instead of smooth.
 - `axes=true`, `grid=true`: orientation gizmo / f3d floor grid (both forced off under `topdown`).
-- `edges=false`, `linewidth=1.0`: draw mesh edges and their width.
+- mesh wireframe edges: live `'e'` hotkey (no kwarg); `outside=:shademesh` turns them
+  on automatically for the grid area an image drape does not cover.
 
 # Extended interactions (forwarded; need an f3d built with `c/f3d_ext_*.cxx`)
 - `cube_axes=true`: labelled bounding-box (X/Y/Z tick) axes with coords.
@@ -1094,18 +1355,22 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 	# image. `outside` controls the grid area NOT covered by the image:
 	#   :drop        – crop the grid to the overlap; uncovered area is not shown.
 	#                  Cheapest: crop BOTH grid and image to their bbox intersection
-	#                  (in-memory subset, NO gdalwarp/resample) and stretch-drape.
+	#                  (in-memory subset) and stretch-drape.
 	#   :shade       – keep the full grid; uncovered area is a flat fixed colour
 	#                  (`outside_color`, grey 0-255), NO mesh edges.
 	#   :shademesh   – like :shade but with global mesh edges on top.
 	#   :transparent – keep the full grid; uncovered area is invisible (see-through).
-	# :shade/:shademesh pad the image into the grid bbox by index copy (no gdal). Only
+	# :shade/:shademesh pad the image into the grid bbox by index copy. Only
 	# :transparent still uses an alpha warp (drape_clip path in view_fv).
 	# geo footprint (x0,x1,y0,y1,proj) of a grid -> lets view_fv stamp a GeoTIFF on .tiff export.
 
+	# Bail BEFORE building the (potentially large) mesh if a window is already open.
+	let h = _busy_view(; async=get(kwargs, :async, true), offscreen=get(kwargs, :offscreen, false))
+		h === nothing || return h
+	end
 	geo(g) = (g.range[1], g.range[2], g.range[3], g.range[4], isempty(g.proj4) ? g.wkt : g.proj4)
 	# No default-patching here: up=+Z, cube_axes and the scale_handle gizmo (rotation rings)
-	# all default in _view_fv_impl — scale_handle = SHOW_ROTATION_RINGS, the SAME default
+	# all default in _view_fv_impl — scale_handle = true, the SAME default
 	# view_points uses, so both viewers enable the rings by the identical procedure.
 	vkw = Dict{Symbol,Any}(kwargs)
 
@@ -1124,8 +1389,8 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 						  thickness=thickness, isbase=isbase, downsample=downsample,
 						  ratio=ratio, bottom=bottom, wall_only=wall_only, top_only=top_only, geog=geog)
 		if (outside === :drop)
-			# crop BOTH grid and image to their bbox intersection (in-memory subset,
-			# no gdalwarp/resample) and stretch-drape; uncovered area is not built.
+			# crop BOTH grid and image to their bbox intersection (in-memory subset),
+			# and stretch-drape; uncovered area is not built.
 			gr, ir = Gin.range, drape.range
 			ix0, ix1 = max(gr[1], ir[1]), min(gr[2], ir[2])
 			iy0, iy1 = max(gr[3], ir[3]), min(gr[4], ir[4])
@@ -1139,19 +1404,20 @@ function view_grid(G; cmap=:turbo, zscale=:auto, vfrac=0.2, vexag=:auto, ncolor:
 			return view_fv(full(Gin); drape=drape, drape_clip=true, georef=geo(Gin), vkw...)
 		elseif (outside === :shade)
 			# full grid; uncovered area = flat `outside_color` fill, NO edges. `drape_pad`
-			# places the image into the full-grid-bbox canvas by index copy (NO gdal/
-			# resample): colour = image + fixed-colour fill outside (lit -> relief shading);
+			# places the image into the full-grid-bbox canvas by index copy
+			# colour = image + fixed-colour fill outside (lit -> relief shading);
 			# emissive = image + BLACK fill outside (fill emits nothing, only image glows).
 			gr = Gin.range
 			Cg, Ce = drape_pad(drape, gr[1], gr[2], gr[3], gr[4]; fill=outside_color)
 			return view_fv(full(Gin); drape=Cg, drape_emis=Ce, drape_clip=false, georef=geo(Gin), vkw...)
 		elseif (outside === :shademesh)
-			# like :shade but with global mesh edges on top (the combined look).
+			# like :shade but with mesh edges on top (the combined look): the only path
+			# that drives the internal `_edges` flag — see _view_fv_impl.
 			gr = Gin.range
 			Cg, Ce = drape_pad(drape, gr[1], gr[2], gr[3], gr[4]; fill=outside_color)
 			kw = copy(vkw)
-			kw[:edges]     = true
-			kw[:linewidth] = get(kw, :linewidth, 1.0)
+			kw[:_edges]     = true
+			kw[:_edge_width] = get(kw, :_edge_width, 1.0)
 			return view_fv(full(Gin); drape=Cg, drape_emis=Ce, drape_clip=false, georef=geo(Gin), kw...)
 		else
 			error("`outside` must be :drop, :shade, :shademesh or :transparent (got :$outside)")
@@ -1262,6 +1528,7 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	scene  = F3D.f3d_engine_get_scene(engine)
 	window = F3D.f3d_engine_get_window(engine)
 	F3D.f3d_window_set_size(window, Cint(win[1]), Cint(win[2]))
+	_place_window(window, win)
 	F3D.f3d_window_set_window_name(window, title)
 
 	opts = F3D.f3d_engine_get_options(engine)
@@ -1357,6 +1624,7 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
+	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
 	# Live coordinate readout under the cursor (referenced images only). Picks the
 	# world point on the flat quad -> shows lon/lat. Interactor-only, so it is enabled
 	# here (not on the offscreen path) after the interactor is initialised.
@@ -1439,7 +1707,8 @@ _has_inmem_texture() = Libdl.dlsym(Libdl.dlopen(F3D.libf3d), :f3d_window_set_col
 # NOTE: rubber-band point picking is NOT wired here — it is point-cloud-only and
 # lives in view_points (a frustum pick on a surface also grabs occluded points).
 function _enable_extras(window, opts; cube_axes=false, coord_readout=false,
-						vscale_drag=false, vscale_step=0.01, scale_handle=false, colorbar=nothing)
+						vscale_drag=false, vscale_step=0.01, scale_handle=false, colorbar=nothing,
+						cube_floor=false)         # floor plane off by default (no see-through)
 	# NOTE: middle-drag pan + middle-click "set rotation centre" are NATIVE in f3d
 	# (vtkF3DInteractorStyle middle=StartPan; interactor_impl middle-click picks a point
 	# and animates the camera to centre it) — no f3d_ext needed once f3d.dll is rebuilt.
@@ -1453,7 +1722,7 @@ function _enable_extras(window, opts; cube_axes=false, coord_readout=false,
 	scale_handle && (vscale_drag = false)
 	coord_readout && F3D.f3d_ext_enable_coord_readout(window)
 	vscale_drag   && F3D.f3d_ext_enable_vertical_scale_drag(window, opts, Cdouble(vscale_step))
-	cube_axes     && F3D.f3d_ext_enable_cube_axes(window)
+	cube_axes     && F3D.f3d_ext_enable_cube_axes(window; floor=cube_floor)
 	scale_handle  && F3D.f3d_ext_enable_scale_handle(window, opts, Cdouble(vscale_step))
 	# Re-enable the colour bar as DRAGGABLE now that the interactor exists (the static one
 	# put up on the offscreen/main path is idempotently swapped for a vtkScalarBarWidget,
@@ -1671,7 +1940,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 					 axes::Bool=true, grid::Bool=true, offscreen::Bool=false,
 					 saveimg::String="", azimuth::Real=-40.0, elevation::Real=25.0,
 					 up="+Z", cube_axes::Bool=true, coord_readout::Bool=true,
-					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=SHOW_ROTATION_RINGS, colorbar::Bool=true,
+					 vscale_drag::Bool=true, vscale_step::Real=0.01, scale_handle::Bool=true, colorbar::Bool=true,
 					 onpick=nothing, pickcolor=(0.83, 0.83, 0.83),
 					 lines=nothing, line_color=nothing, line_width::Real=2.0, L=nothing)
 	lines = L === nothing ? lines : L          # `L` = GMT-style short alias for `lines`
@@ -1762,6 +2031,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	scene  = F3D.f3d_engine_get_scene(engine)
 	window = F3D.f3d_engine_get_window(engine)
 	F3D.f3d_window_set_size(window, Cint(size[1]), Cint(size[2]))
+	_place_window(window, size)
 	F3D.f3d_window_set_window_name(window, title)
 
 	opts = F3D.f3d_engine_get_options(engine)
@@ -1842,7 +2112,15 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	# Labelled cube axes with coordinates in EVERY figure — incl. offscreen / saveimg
 	# exports (enabled here, before the frame grab, not only on the interactive path).
 	if cube_axes && _has_f3d_ext()
-		F3D.f3d_ext_enable_cube_axes(window)
+		F3D.f3d_ext_enable_cube_axes(window; floor = false)   # no see-through floor plane
+		F3D.f3d_window_render(window)
+	end
+
+	# Rotation-centre gizmo before the frame grab so it lands in offscreen / saveimg exports
+	# too (idempotently re-asserted on the interactive path via _enable_extras). Same as the
+	# view_grid/_view_fv_impl path — keeps the two viewers' exports consistent.
+	if scale_handle && _has_f3d_ext()
+		F3D.f3d_ext_enable_scale_handle(window, opts, Cdouble(vscale_step))
 		F3D.f3d_window_render(window)
 	end
 
@@ -1872,6 +2150,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
+	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
 	# Extended interactions (need a rebuilt f3d_ext DLL): cube axes / coordinate
 	# readout / vertical-scale drag. Enabled after the first render (cube axes needs
 	# bounds). Point clouds are the right place for the rubber-band selector.
@@ -1895,7 +2174,8 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	# _pick_trampoline -> onpick(rows). Ctrl+Z undoes / re-dragging the same box deselects.
 	pick_on = _arm_pick(window, onpick, pickcolor)
 	pick_on && println("  pick: Ctrl+right-drag a box to select (Ctrl+Z undo); selection(h) / return value gives the points")
-	_handle_chan === nothing || put!(_handle_chan, interactor)   # async: let the REPL close! us
+
+	(_handle_chan === nothing) || put!(_handle_chan, interactor)   # async: let the REPL close! us
 	_interactor_start_gcsafe(interactor, 1.0 / 30.0)    # blocks until window closed (GC-safe)
 	F3D.f3d_interactor_stop(interactor)   # kill the event-loop timer -> no stray OnTimer AV on close
 	pick_on && F3D.f3d_ext_disable_rubber_band_pick(window)
@@ -1904,45 +2184,174 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	_has_f3d_ext() && F3D.f3d_ext_disable_sprite_zscale_sync(window)
 	disable_extras()
 	colorbar && !categorical && _has_f3d_ext() && F3D.f3d_ext_disable_colorbar(window)
-	lines === nothing || !_has_f3d_ext() || F3D.f3d_ext_clear_lines(window)
+	(lines === nothing) || !_has_f3d_ext() || F3D.f3d_ext_clear_lines(window)
 	F3D.f3d_scene_clear(scene)        # drop actors before GL teardown -> avoids close-time AV in engine_delete
 	F3D.f3d_engine_delete(engine)
 	return nothing
 end
 
-function main(name::AbstractString="torus"; color::Bool=true, lights=DEMO_LIGHTS, flat::Bool=false,
-			  axes::Bool=true, grid::Bool=true)
-	builder=get(SOLIDS, lowercase(name), nothing)
-	if (builder === nothing)
-		error("unknown solid '$name'. Choose one of: $(join(sort(collect(keys(SOLIDS))), ", "))")
+# ===========================================================================
+# poly2fv — fold closed polygons into a GMTfv, ONE face per polygon, any corner
+# count. Generalises `tri2fv` (triangles only) to quads / n-gons: `fv_to_mesh`
+# already renders arbitrary-sided faces, so n-gons need NO triangulation — VTK
+# tessellates each convex, planar cell at render. `triangulate=true` fan-splits
+# every polygon into triangles first (vertex-1 fan) for concave / strongly
+# non-planar polygons where the single-cell fill would look wrong. Vertices are
+# split per face (never shared), so per-face colour is trivial; faces are coloured
+# by their mean z through `cmap`, exactly like `tri2fv`. Faces of different corner
+# counts go into separate GMTfv face groups (the format needs one fixed width per
+# group); fv_to_mesh iterates groups, so a mix renders fine.
+# ===========================================================================
+function poly2fv(D::Vector{<:GMT.GMTdataset}; cmap=:turbo, zscale=:auto,
+				 vfrac=0.2, vexag=:auto, isgeog::Bool=false, ncolor::Int=256,
+				 triangulate::Bool=false)
+	isempty(D) && error("no polygons to render")
+	faces_xyz = Matrix{Float64}[]                    # one matrix of corner xyz per face
+	for d in D
+		P = Matrix{Float64}(d.data)
+		size(P, 2) >= 3 || error("polygon needs 3-D vertices (x y z); got $(size(P,2)) columns")
+		(size(P, 1) >= 2 && @views P[1, 1:3] == P[end, 1:3]) && (P = P[1:end-1, :])  # drop closing dup
+		size(P, 1) >= 3 || continue
+		if triangulate                               # fan from vertex 1: (1, t, t+1)
+			for t in 2:size(P, 1)-1
+				push!(faces_xyz, P[[1, t, t + 1], :])
+			end
+		else
+			push!(faces_xyz, P)
+		end
 	end
-	fv = builder()
-	color && colorize_by_z!(fv)         # fill fv.color so the colour path is exercised
-	view_fv(fv; title="F3D — GMT $name" * (flat ? " (flat)" : ""),
-			lights=lights, flat=flat, axes=axes, grid=grid)
+	nf = length(faces_xyz)
+	nf == 0 && error("no usable polygon faces (need >= 3 vertices each)")
+	ncorners = sum(size(P, 1) for P in faces_xyz)
+	V  = Matrix{Float64}(undef, ncorners, 3)
+	zc = Vector{Float64}(undef, nf)                  # per-face mean z (true, for colour)
+	buckets = Dict{Int,Vector{Tuple{Int,Vector{Int}}}}()   # npf -> [(faceidx, [vert ids])]
+	vi = 0
+	for (k, P) in enumerate(faces_xyz)
+		np  = size(P, 1)
+		row = Vector{Int}(undef, np)
+		zsum = 0.0
+		for c in 1:np
+			vi += 1
+			V[vi, 1] = P[c, 1];  V[vi, 2] = P[c, 2];  V[vi, 3] = P[c, 3]
+			row[c] = vi;  zsum += P[c, 3]
+		end
+		zc[k] = zsum / np
+		push!(get!(buckets, np, Tuple{Int,Vector{Int}}[]), (k, row))
+	end
+	xmin, xmax = extrema(@view V[:, 1]);  ymin, ymax = extrema(@view V[:, 2])
+	zmin, zmax = extrema(@view V[:, 3])
+	s = _resolve_zscale(zscale, xmax - xmin, ymax - ymin, zmax - zmin, vfrac, isgeog, vexag)
+	s == 1.0 || (@inbounds @views V[:, 3] .*= s)     # apply vertical scale to geometry
+	czmin, czmax = extrema(zc)                        # colour range from true z
+	# A flat slab (all faces equal mean-z) gives czmin == czmax -> makecpt errors
+	# "min >= max"; widen to a unit window so every face lands on the mid colour.
+	czmax > czmin || (czmin -= 0.5;  czmax += 0.5)
+	step = (czmax - czmin) / ncolor
+	cm = GMT.makecpt(cmap = string(cmap), range = (czmin, czmax, step)).colormap
+	faces = Matrix{Int}[];  colors = Vector{Vector{String}}()
+	for npf in sort(collect(keys(buckets)))          # one group per distinct corner count
+		rows = buckets[npf];  m = length(rows)
+		Fm = Matrix{Int}(undef, m, npf);  col = Vector{String}(undef, m)
+		for (j, (gk, row)) in enumerate(rows)
+			@inbounds for c in 1:npf;  Fm[j, c] = row[c];  end
+			col[j] = string("-G", z_to_hex(zc[gk], cm, czmin, czmax))
+		end
+		push!(faces, Fm);  push!(colors, col)
+	end
+	bb = Float64[xmin, xmax, ymin, ymax, extrema(@view V[:, 3])...]
+	return GMT.GMTfv(verts = V, faces = faces, color = colors, bbox = bb, isflat = fill(false, length(faces)))
 end
 
-if !isempty(PROGRAM_FILE) && lowercase(abspath(PROGRAM_FILE)) == lowercase(@__FILE__)
-	name = isempty(ARGS) ? "torus" : ARGS[1]
-	flat = any(a -> lowercase(a) == "flat", ARGS)   # e.g. `julia gmt_solids.jl cube flat`
-	if lowercase(name) in ("grid", "peaks")         # demo the grid bridge: `julia gmt_solids.jl grid`
-		view_grid(GMT.peaks(); flat=flat)
-	elseif isfile(name)                             # a grid file: `julia gmt_solids.jl dem.grd`
-		view_grid(name; flat=flat)
-	else
-		main(name; flat=flat)                   # e.g. `julia gmt_solids.jl cube`
+# ===========================================================================
+# view_lines — standalone 3-D polyline viewer (coastlines / tracks / contours /
+# wireframes with no surface under them). Mirrors the engine lifecycle of
+# `_view_fv_impl` but adds NO mesh: the polylines are drawn through the f3d_ext
+# line hatch (`_draw_lines`), which needs the f3d_ext DLL. `lines` accepts the
+# same shapes `_draw_lines` does (Matrix N×2/3, GMTdataset, or a Vector of those).
+# ===========================================================================
+view_lines(lines; async::Bool=true, kwargs...) = (async && !get(kwargs, :offscreen, false)) ?
+		_async_view(ch -> _view_lines_impl(lines; _handle_chan=ch, kwargs...)) : _view_lines_impl(lines; kwargs...)
+
+function _view_lines_impl(lines; _handle_chan=nothing, title::AbstractString="F3D — GMT lines",
+				 size::Tuple{Int,Int}=(1600, 1200), bg=(0.1, 0.1, 0.15), up="+Z",
+				 line_color=:yellow, line_width::Real=2.0, line_zfac::Real=1.0,
+				 azimuth::Real=-40.0, elevation::Real=25.0, axes::Bool=true, grid::Bool=true,
+				 cube_axes::Bool=true, coord_readout::Bool=true, scale_handle::Bool=true,
+				 offscreen::Bool=false, saveimg::String="")
+	_has_f3d_ext() || error("view_lines needs an f3d built with c/f3d_ext_*.cxx (f3d_ext_add_lines)")
+	F3D.f3d_engine_autoload_plugins()
+	engine = F3D.f3d_engine_create(Cint(offscreen ? 1 : 0))
+	engine == C_NULL && error("failed to create F3D engine")
+	scene  = F3D.f3d_engine_get_scene(engine)
+	window = F3D.f3d_engine_get_window(engine)
+	F3D.f3d_window_set_size(window, Cint(size[1]), Cint(size[2]))
+	_place_window(window, size)
+	F3D.f3d_window_set_window_name(window, title)
+
+	opts = F3D.f3d_engine_get_options(engine)
+	(up === nothing) || F3D.f3d_options_set_as_string_representation(opts, "scene.up_direction", string(up))
+	F3D.f3d_options_set_as_bool(opts, "ui.scalar_bar", Cint(0))
+	axes && F3D.f3d_options_set_as_bool(opts, "ui.axis", Cint(1))
+	if grid
+		F3D.f3d_options_set_as_bool(opts, "render.grid.enable", Cint(1))
+		F3D.f3d_options_set_as_bool(opts, "render.grid.absolute", Cint(0))
 	end
+	F3D.f3d_options_set_as_double_vector(opts, "render.background.color", Cdouble[bg[1], bg[2], bg[3]], Csize_t(3))
+
+	# Draw the polylines FIRST so reset_to_bounds has actors to frame (the line actors
+	# are real props in the renderer, so ResetCamera includes them).
+	_draw_lines(window, lines, line_color, line_width, line_zfac)
+
+	camera = F3D.f3d_window_get_camera(window)
+	F3D.f3d_camera_reset_to_bounds(camera, 0.9)
+	(azimuth   == 0) || F3D.f3d_camera_azimuth(camera, Cdouble(azimuth))
+	(elevation == 0) || F3D.f3d_camera_elevation(camera, Cdouble(elevation))
+	F3D.f3d_window_render(window)
+
+	if (cube_axes && _has_f3d_ext())
+		F3D.f3d_ext_enable_cube_axes(window; floor = false);  F3D.f3d_window_render(window)
+	end
+	if (scale_handle && _has_f3d_ext())          # gizmo before the grab -> shows in exports too
+		F3D.f3d_ext_enable_scale_handle(window, opts, Cdouble(0.01));  F3D.f3d_window_render(window)
+	end
+
+	if !isempty(saveimg)
+		simg, sfmt = _img_target(saveimg)
+		img = F3D.f3d_window_render_to_image(window, Cint(0))
+		F3D.f3d_image_save(img, simg, sfmt)
+	end
+	if offscreen
+		F3D.f3d_engine_delete(engine);  return nothing
+	end
+
+	interactor = F3D.f3d_engine_get_interactor(engine)
+	F3D.f3d_interactor_init_commands(interactor)
+	F3D.f3d_interactor_init_bindings(interactor)
+	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
+	disable_extras = _enable_extras(window, opts; cube_axes=cube_axes, coord_readout=coord_readout, scale_handle=scale_handle)
+	(_handle_chan === nothing) || put!(_handle_chan, interactor)
+	_interactor_start_gcsafe(interactor, 1.0 / 30.0)
+
+	F3D.f3d_interactor_stop(interactor)
+	disable_extras()
+	_has_f3d_ext() && F3D.f3d_ext_clear_lines(window)
+	F3D.f3d_scene_clear(scene)
+	F3D.f3d_engine_delete(engine)
+	return nothing
 end
 
-# Colour comes from `fv.color` (GMT `-G` strings). Real GMT producers fill it —
-# e.g. `flatfv(image, ...)` builds an FV from an RGB image, one `-G#rrggbb` per
-# face, so `view_fv(flatfv("pic.png", shape=:circle))` is coloured for free.
-# `colorize_by_z!` here is only a demo filler for the plain solids.
-#
-# Illumination: normals are computed in `fv_to_mesh`. Default `flat=false` gives
-# smooth shading (averaged per-vertex normals, `compute_vertex_normals`);
-# `flat=true` gives faceted shading (one Newell face normal per face, split
-# verts). Lights are set via the `lights` keyword — e.g.
-#   view_fv(fv; flat=true, lights=[(; type=:scene, direction=(-1,-1,-1), intensity=1.3)])
-# With `lights=()` F3D falls back to its default headlight.
-# CLI: `julia gmt_solids.jl cube flat`.
+# Geometry helpers for f3dview's GMTdataset dispatch (the docstring is on f3dview).
+# WKB geometry code -> kind. Strip the 25D flag bit (0x80000000) and fold the
+# Z/ZM thousands (1001, 3003, ...) so every variant maps to its base 1..6:
+# 1/4 = (multi)point, 2/5 = (multi)line, 3/6 = (multi)polygon.
+_geom_kind(g::Integer) = (c = (g & 0x7fffffff) % 1000;
+	c in (1, 4) ? :points : c in (2, 5) ? :lines : c in (3, 6) ? :polys : :unknown)
+
+# Resolve a dataset to :points / :lines / :polys. Prefer the stored geometry; when
+# unset (geom 0), fall back to closure — a ring whose first xy == last xy is a polygon.
+function _ds_kind(D::GMT.GMTdataset)
+	k = _geom_kind(Int(D.geom))
+	(k === :unknown) || return k
+	(size(D.data, 1) >= 4 && @views D.data[1, 1:2] == D.data[end, 1:2]) ? :polys : :points
+end
