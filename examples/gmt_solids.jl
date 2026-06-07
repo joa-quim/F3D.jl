@@ -623,11 +623,21 @@ function _interactor_start_gcsafe(interactor, dt)
 	end
 end
 
-# The raytracing build of the f3d DLL ships WITHOUT ospray_module_cpu, so F3D's
-# default 'R'/'Shift+R' key bindings (toggle raytracing / denoiser) load a missing
-# OSPRay module and hard-crash Julia (EXCEPTION_ACCESS_VIOLATION). Scan the live
-# binds and drop every one whose documentation mentions "raytracing". Call AFTER
+# Raytracing ('R' / 'Shift+R') switches the live render from GL raster to CPU OSPRay
+# path-tracing. Measured offscreen it is fast (60-294 ms/frame), but in the interactive
+# loop it pins all cores at 100% and never returns control to the event loop -> the window
+# freezes hard and killing it crashes the REPL. The root cause of the non-return was not
+# isolated; until it is, strip the raytracing binds from the LIVE viewer so the key cannot
+# freeze the window. Offscreen raytracing stays available via F3D.preload_raytracing()
+# + the render.raytracing.* options (see examples/raytracing.md). Call AFTER
 # f3d_interactor_init_bindings.
+#
+# TO REACTIVATE the live 'R' key: at each call site below, replace
+#     _disable_raytracing_bindings(interactor)
+# with
+#     F3D.preload_raytracing()   # load ospray modules so 'R' does not crash on toggle
+# (4 sites: view_image, view_grid, view_points). WARNING: live raytracing currently
+# freezes the window as described above; only do this once that is fixed upstream.
 function _disable_raytracing_bindings(interactor)
 	interactor == C_NULL && return
 	cnt  = Ref{Cint}(0)
@@ -1054,7 +1064,7 @@ function _view_fv_impl(fv::GMT.GMTfv; _handle_chan=nothing, title::AbstractStrin
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
-	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
+	_disable_raytracing_bindings(interactor)   # live RT pins CPU + freezes window; offscreen RT still ok
 	# Extended interactions (need a rebuilt f3d_ext DLL): labelled cube axes,
 	# coordinate readout, Ctrl+left-drag vertical exaggeration. Enabled after the
 	# render above so the cube axes can capture the data bounds.
@@ -1624,7 +1634,7 @@ function _view_image_impl(I::GMT.GMTimage; _handle_chan=nothing, title::Abstract
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
-	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
+	_disable_raytracing_bindings(interactor)   # live RT pins CPU + freezes window; offscreen RT still ok
 	# Live coordinate readout under the cursor (referenced images only). Picks the
 	# world point on the flat quad -> shows lon/lat. Interactor-only, so it is enabled
 	# here (not on the offscreen path) after the interactor is initialised.
@@ -2150,7 +2160,7 @@ function _view_points_impl(D::GMT.GMTdataset; _handle_chan=nothing, color=:z, cl
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
-	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
+	_disable_raytracing_bindings(interactor)   # live RT pins CPU + freezes window; offscreen RT still ok
 	# Extended interactions (need a rebuilt f3d_ext DLL): cube axes / coordinate
 	# readout / vertical-scale drag. Enabled after the first render (cube axes needs
 	# bounds). Point clouds are the right place for the rubber-band selector.
@@ -2328,7 +2338,7 @@ function _view_lines_impl(lines; _handle_chan=nothing, title::AbstractString="F3
 	interactor = F3D.f3d_engine_get_interactor(engine)
 	F3D.f3d_interactor_init_commands(interactor)
 	F3D.f3d_interactor_init_bindings(interactor)
-	_disable_raytracing_bindings(interactor)   # ospray module absent in DLL -> 'R' crashes Julia
+	_disable_raytracing_bindings(interactor)   # live RT pins CPU + freezes window; offscreen RT still ok
 	disable_extras = _enable_extras(window, opts; cube_axes=cube_axes, coord_readout=coord_readout, scale_handle=scale_handle)
 	(_handle_chan === nothing) || put!(_handle_chan, interactor)
 	_interactor_start_gcsafe(interactor, 1.0 / 30.0)
