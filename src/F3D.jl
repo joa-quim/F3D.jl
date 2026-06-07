@@ -332,9 +332,9 @@ F3D.f3d_image_save(img, "out.png", F3D.PNG)
 
 NOTE: enabling raytracing in the *live* interactor (the `R` key) pins all CPU cores at
 100 %, drops GPU to zero, and freezes the window (root cause not isolated); the
-interactive viewers in `examples/gmt_solids.jl` strip the `R`/`Shift+R` binds for that
-reason. The offscreen path above, with the identical options, is fast and clean. See
-`examples/raytracing.md`.
+interactive viewers in the companion GMTF3D package strip the `R`/`Shift+R` binds for
+that reason. The offscreen path above, with the identical options, is fast and clean.
+See the GMTF3D docs (Raytracing page).
 """
 const _RT_PRELOADED = Ref(false)
 function preload_raytracing()
