@@ -17,6 +17,11 @@ To install do:
 ] add https://github.com/joa-quim/F3D.jl
 ```
 
+This also installs the F3D _nightly_ binaries. See the `F3D.update()` function online help 
+(type `? F3D.update()`) on howto install other F3D versions but be aware that currently only the
+_nightly_ binaries on Windows give a full working **[GMTF3D](https://github.com/Joa-quim/GMTF3D.jl)**
+package.
+
 The tests run fine locally (all pass on Windows and two fail on Linux) but the CI runs crash???.
 
 The `test/test_mesh.jl` example shows _how to display a cow_ (the `cow.vtp` lives in the tests directory too).
