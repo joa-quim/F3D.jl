@@ -723,4 +723,15 @@ end
 # ============================================================
 include("test_scene_from_memory.jl")
 
+# ============================================================
+# Extended functionality (model_scale + f3d_ext); auto-skips on a stock DLL
+# ============================================================
+include("test_f3d_ext.jl")
+
+# ============================================================
+# view_grid / view_points wrapper defaults moved to the GMTF3D package
+# (test/test_view_grid_defaults.jl there) when the viewer code left
+# examples/gmt_solids.jl. The wrapper layer is no longer part of F3D.jl.
+# ============================================================
+
 end  # top-level testset

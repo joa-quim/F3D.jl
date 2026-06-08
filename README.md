@@ -27,3 +27,12 @@ using F3D
 include(joinpath(pkgdir(F3D), "test", "test_mesh.jl"))
 test_mesh()
 ```
+
+## Interactive 3-D viewing of GMT data
+
+A high-level viewer turns GMT grids, point-cloud datasets and Faces–Vertices
+solids into an interactive VTK window (or an off-screen image) — `view_grid`,
+`view_points`, `view_fv` — with vertical exaggeration, image draping, cube axes,
+coordinate readout and point selection. These viewers live in the companion
+**[GMTF3D](https://github.com/Joa-quim/GMTF3D.jl)** package; see its
+[3-D viewer guide](https://github.com/Joa-quim/GMTF3D.jl/blob/master/docs/src/viewer3d.md).

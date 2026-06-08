@@ -155,6 +155,38 @@ function f3d_colormap_free(colormap)
 end
 
 """
+    f3d_mesh_scalar_t
+
+Describe a named scalar array used to color a mesh through a colormap.
+
+`components` is the number of values per point/cell (1 for a scalar field).
+`data_count` must be `components` times the number of points (point array) or
+faces (cell array).
+"""
+struct f3d_mesh_scalar_t
+    name::Cstring
+    components::Cuint
+    data::Ptr{Cfloat}
+    data_count::Csize_t
+end
+
+"""
+    f3d_mesh_color_t
+
+Describe a named direct-color array used to color a mesh.
+
+Values are unsigned chars in the [0, 255] range. `components` must be 3 (RGB) or
+4 (RGBA). `data_count` must be `components` times the number of points (point
+array) or faces (cell array).
+"""
+struct f3d_mesh_color_t
+    name::Cstring
+    components::Cuint
+    data::Ptr{Cuchar}
+    data_count::Csize_t
+end
+
+"""
     f3d_mesh_t
 
 Describe a 3D surfacic mesh.
@@ -170,6 +202,26 @@ struct f3d_mesh_t
     face_sides_count::Csize_t
     face_indices::Ptr{Cuint}
     face_indices_count::Csize_t
+    point_scalars::Ptr{f3d_mesh_scalar_t}
+    point_scalars_count::Csize_t
+    cell_scalars::Ptr{f3d_mesh_scalar_t}
+    cell_scalars_count::Csize_t
+    point_colors::Ptr{f3d_mesh_color_t}
+    point_colors_count::Csize_t
+    cell_colors::Ptr{f3d_mesh_color_t}
+    cell_colors_count::Csize_t
+end
+
+# Back-compat constructor: callers that only supply geometry (points/normals/
+# texcoords/sides/indices) get empty scalar/color arrays.
+function f3d_mesh_t(points, points_count, normals, normals_count,
+                    texture_coordinates, texture_coordinates_count,
+                    face_sides, face_sides_count, face_indices, face_indices_count)
+    return f3d_mesh_t(points, points_count, normals, normals_count,
+        texture_coordinates, texture_coordinates_count,
+        face_sides, face_sides_count, face_indices, face_indices_count,
+        C_NULL, Csize_t(0), C_NULL, Csize_t(0),
+        C_NULL, Csize_t(0), C_NULL, Csize_t(0))
 end
 
 """
@@ -2045,6 +2097,485 @@ Image handle containing the rendered result, or NULL on failure.
 """
 function f3d_window_render_to_image(window, no_background)
     ccall((:f3d_window_render_to_image, libf3d), Ptr{f3d_image_t}, (Ptr{f3d_window_t}, Cint), window, no_background)
+end
+
+"""
+    f3d_window_set_color_texture(window, image)
+
+Set the model base color texture from an in-memory image, avoiding a temporary file on disk.
+
+The image is expected to be of ChannelType BYTE with 3 (RGB) or 4 (RGBA) components. When set, it takes precedence over the `model.color.texture` file-path option. Pass an empty image (width or height 0) to clear the override and fall back to that option.
+
+# Arguments
+* `window`: Window handle.
+* `image`: Image handle holding the texture, not freed by this call.
+"""
+function f3d_window_set_color_texture(window, image)
+    ccall((:f3d_window_set_color_texture, libf3d), Cvoid, (Ptr{f3d_window_t}, Ptr{f3d_image_t}), window, image)
+end
+
+"""
+    f3d_ext_enable_vertical_scale_drag(window, options, sensitivity)
+
+Map Ctrl + left-button vertical drag to the model's Z scale (vertical exaggeration).
+Drives the `render.model_scale` option, so pass the engine's options handle (from
+[`f3d_engine_get_options`](@ref)).
+
+This is an `f3d_ext` extension symbol: it only exists in an f3d built with the
+`c/f3d_ext_*.cxx` sources (a stock DLL has no `f3d_ext` symbols, so calling this on
+one errors). Pass `sensitivity <= 0` for the default (0.01 per pixel). Returns 1 on
+success, 0 if the window has no interactor yet.
+"""
+function f3d_ext_enable_vertical_scale_drag(window, options, sensitivity)
+    ccall((:f3d_ext_enable_vertical_scale_drag, libf3d), Cint, (Ptr{f3d_window_t}, Ptr{Cvoid}, Cdouble), window, options, sensitivity)
+end
+
+"""
+    f3d_ext_disable_vertical_scale_drag(window)
+
+Restore the interactor style that was active before
+[`f3d_ext_enable_vertical_scale_drag`](@ref). Does not reset the model scale; set
+`render.model_scale` back to `(1,1,1)` to undo the exaggeration. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_vertical_scale_drag(window)
+    ccall((:f3d_ext_disable_vertical_scale_drag, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_scale_handle(window, options, sensitivity)
+
+Show a Fledermaus-style interaction gizmo pinned to the camera focal point (the
+rotation centre). Three left-drag handles:
+
+* the vertical arrowhead cone → vertical scale (`render.model_scale` z); the shaft
+  keeps a fixed length while the cone stretches to show the current exaggeration.
+  Ctrl + left-drag anywhere also still scales.
+* the two horizontal arrows → tilt (camera elevation about the horizontal axis through
+  the focal point).
+* the compass ring band → azimuth (heading rotation about the world vertical;
+  inclination unchanged).
+
+The vertical axis is world-up (leans with the view inclination); the horizontal axis
+follows the camera screen-right, so both axes stay aligned with the window instead of
+spinning as the view orbits.
+
+A billboard label on the axis shows the vertical exaggeration. Drives
+`render.model_scale` through the option (so it survives f3d's per-render push) — pass
+the engine's options handle (from [`f3d_engine_get_options`](@ref)). `f3d_ext` symbol.
+Pass `sensitivity <= 0` for the default (0.01 per pixel). Call after the engine has an
+interactor and a first render. Returns 1 on success, 0 if the window has no
+interactor/renderer/camera yet.
+"""
+function f3d_ext_enable_scale_handle(window, options, sensitivity)
+    ccall((:f3d_ext_enable_scale_handle, libf3d), Cint, (Ptr{f3d_window_t}, Ptr{Cvoid}, Cdouble), window, options, sensitivity)
+end
+
+"""
+    f3d_ext_disable_scale_handle(window)
+
+Remove the scale-handle gizmo (props + observers). Does not reset the model scale;
+set `render.model_scale` back to `(1,1,1)` to undo. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_scale_handle(window)
+    ccall((:f3d_ext_disable_scale_handle, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_coord_readout(window)
+
+Show a live readout of the world coordinate under the mouse cursor in a text box at
+the bottom-left of the view, updated on every mouse move (blank when off geometry).
+
+`f3d_ext` extension symbol — only present in an f3d built with `c/f3d_ext_*.cxx`.
+Cannot be active at the same time as [`f3d_ext_enable_vertical_scale_drag`](@ref) on
+the same window (both install an interactor style). Returns 1 on success, 0 if the
+window has no interactor/renderer yet.
+"""
+function f3d_ext_enable_coord_readout(window)
+    ccall((:f3d_ext_enable_coord_readout, libf3d), Cint, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_disable_coord_readout(window)
+
+Remove the coordinate-readout overlay and restore the prior interactor style.
+`f3d_ext` symbol.
+"""
+function f3d_ext_disable_coord_readout(window)
+    ccall((:f3d_ext_disable_coord_readout, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_focus_pick(window)
+
+Middle-CLICK (press+release, no drag) picks the point under the cursor, sets it as the
+camera focal point (rotation centre) and pans so it is centred. Middle-DRAG still pans.
+`f3d_ext` symbol — `_has_f3d_ext()`-gated on the caller side.
+"""
+function f3d_ext_enable_focus_pick(window)
+    ccall((:f3d_ext_enable_focus_pick, libf3d), Cint, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_disable_focus_pick(window)
+
+Remove the middle-click focal-centre observers. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_focus_pick(window)
+    ccall((:f3d_ext_disable_focus_pick, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+# Component flags for f3d_ext_enable_cube_axes (must match f3d_ext.h).
+const F3D_EXT_CUBE_AXES_EDGES   = 0x01  # cube edges + X/Y tick labels
+const F3D_EXT_CUBE_AXES_FLOOR   = 0x02  # bottom floor plane
+const F3D_EXT_CUBE_AXES_GRID    = 0x04  # gridlines on all faces (walls)
+const F3D_EXT_CUBE_AXES_ZLABELS = 0x08  # Z (elevation) tick labels
+const F3D_EXT_CUBE_AXES_DEFAULT = F3D_EXT_CUBE_AXES_EDGES | F3D_EXT_CUBE_AXES_FLOOR | F3D_EXT_CUBE_AXES_ZLABELS
+
+"""
+    f3d_ext_enable_cube_axes(window; edges=true, floor=true, grid=false, zlabels=true)
+    f3d_ext_enable_cube_axes(window, flags::Integer)
+
+Add labelled bounding-box axes (numbered X/Y/Z tick axes) around the data — the
+cube-axes the stock libf3d lacks (API gap #2). The default is the cube edges +
+X/Y/Z tick labels + a semi-transparent bottom floor; the wall gridlines (`grid`)
+are opt-in, and Z elevation labels (`zlabels`) can be turned off. The cube uses
+the exact data bounds. Bounds are captured at call time; call again to refresh
+after a geometry/scale change. `f3d_ext` symbol. Returns 1 on success, 0 if there
+is no renderer/camera/data yet.
+
+For a grid/terrain layout where X and Y both lie on the floor and Z is the
+vertical (elevation) axis, set `scene.up_direction` to `+Z` (the f3d default `+Y`
+stands the grid up as a wall). Use `f3d_options_set_as_string_representation`.
+"""
+function f3d_ext_enable_cube_axes(window; edges::Bool = true, floor::Bool = true,
+                                  grid::Bool = false, zlabels::Bool = true)
+    flags = (edges   ? F3D_EXT_CUBE_AXES_EDGES   : 0x00) |
+            (floor   ? F3D_EXT_CUBE_AXES_FLOOR   : 0x00) |
+            (grid    ? F3D_EXT_CUBE_AXES_GRID    : 0x00) |
+            (zlabels ? F3D_EXT_CUBE_AXES_ZLABELS : 0x00)
+    return f3d_ext_enable_cube_axes(window, flags)
+end
+function f3d_ext_enable_cube_axes(window, flags::Integer)
+    ccall((:f3d_ext_enable_cube_axes, libf3d), Cint, (Ptr{f3d_window_t}, Cint), window, Cint(flags))
+end
+
+"""
+    f3d_ext_disable_cube_axes(window)
+
+Remove the labelled cube axes. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_cube_axes(window)
+    ccall((:f3d_ext_disable_cube_axes, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_image_axes(window, xfmt="%.2f", yfmt="%.2f")
+
+Add a 2-D map frame (X along the bottom, Y along the left, outward tick marks) for
+a flat image viewed top-down. `xfmt`/`yfmt` are printf formats for the tick labels.
+Shares the cube-axes registry, so `f3d_ext_disable_cube_axes` removes it. `f3d_ext`
+symbol — `_has_f3d_ext()`-gated on the caller side.
+"""
+function f3d_ext_enable_image_axes(window, xfmt::AbstractString = "%.2f", yfmt::AbstractString = "%.2f")
+    ccall((:f3d_ext_enable_image_axes, libf3d), Cint,
+          (Ptr{f3d_window_t}, Cstring, Cstring), window, xfmt, yfmt)
+end
+
+"""
+    f3d_ext_enable_colorbar(window, rgb, ncolors, vmin, vmax, title="", fmt="%.1f"; draggable=false)
+
+Add a vertical colour scale on the right of the window from an ordered RGB palette
+(`rgb` is `ncolors*3` bytes, low→high) mapped onto `[vmin, vmax]`. The C side copies
+the palette immediately. With `draggable=true` the bar is wrapped in a
+`vtkScalarBarWidget`, so it can be dragged and corner-resized with the mouse (needs an
+interactor). `f3d_ext` symbol — `_has_f3d_ext()`-gated on the caller side.
+"""
+function f3d_ext_enable_colorbar(window, rgb::Vector{UInt8}, ncolors::Integer,
+        vmin::Real, vmax::Real, title::AbstractString = "", fmt::AbstractString = "%.1f";
+        draggable::Bool = false)
+    GC.@preserve rgb ccall((:f3d_ext_enable_colorbar, libf3d), Cint,
+        (Ptr{f3d_window_t}, Ptr{UInt8}, Cint, Cdouble, Cdouble, Cstring, Cstring, Cint),
+        window, pointer(rgb), Cint(ncolors), Cdouble(vmin), Cdouble(vmax), title, fmt,
+        Cint(draggable))
+end
+
+"""
+    f3d_ext_disable_colorbar(window)
+
+Remove the colour scale. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_colorbar(window)
+    ccall((:f3d_ext_disable_colorbar, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_color_point_sprites(window, rgb, n_points, n_comp)
+
+Give point SPRITES per-point colours (F3D_API gap #9). The point-sprite path uses
+`vtkPointGaussianMapper`, which ignores texture coordinates, so the palette-texture
++ per-point u-texcoord trick that colours plain `GL_POINTS` leaves every splat flat
+grey. This bakes a per-point RGB (`n_comp==3`) or RGBA (`n_comp==4`) unsigned-char
+colour array directly onto the sprite polydata, switches the gaussian mapper to
+direct scalar colours, and turns Emissive on so the colour shows at full strength.
+
+The splat SHAPE is the stock `model.point_sprites.type` option ("sphere" shaded ball
+/ "circle" ring / "gaussian" soft blob); f3d's splat mapper ignores a shader override
+set after the first render, so the shape can't be changed here. For round FLAT points
+use the plain-points path + [`f3d_ext_round_points`](@ref) instead.
+
+`rgb` is a `Vector{UInt8}` of `n_points*n_comp` interleaved bytes, read during the
+call only. Enable point sprites and render the window once before calling. `f3d_ext`
+symbol. Returns 1 if applied to at least one sprite actor, 0 on error / no match.
+"""
+function f3d_ext_color_point_sprites(window, rgb, n_points, n_comp)
+    ccall((:f3d_ext_color_point_sprites, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cuchar}, Csize_t, Cint),
+          window, rgb, Csize_t(n_points), Cint(n_comp))
+end
+
+"""
+    f3d_ext_round_points(window, on, unlit = true)
+
+Render PLAIN points (point sprites disabled) as round discs (F3D_API gap #9). The
+plain-points path honours the palette texture (colour-by-value works) but draws
+SQUARE `GL_POINTS`; this sets `vtkProperty::RenderPointsAsSpheres` on the imported
+point actors so they render round. With `unlit=true` lighting is turned off so each
+disc is a flat, full-strength colour (no 3D sphere shading). Pass `on=false` to
+revert to square points. Render once before calling. `f3d_ext` symbol. Returns 1 if
+applied to at least one point actor, 0 on error / no match.
+"""
+function f3d_ext_round_points(window, on, unlit = true)
+    ccall((:f3d_ext_round_points, libf3d), Cint,
+          (Ptr{f3d_window_t}, Cint, Cint),
+          window, Cint(on ? 1 : 0), Cint(unlit ? 1 : 0))
+end
+
+"""
+    f3d_ext_enable_sprite_size_keys(window, options, size = 10.0, factor = 1.25)
+
+Bind `Shift+'+'` / `Shift+'-'` to grow / shrink the point sprites at runtime. f3d's `O`
+key cycles the sprite TYPE but never the size, so the non-default splat shapes render at
+the fixed `model.point_sprites.size` (default 10) and look oversized. This observer
+multiplies / divides that option by `factor` per press and re-renders; plain `+`/`-`
+stay free (e.g. for zoom). Layout-independent (matches the shifted character). Needs an
+interactor; pass the engine's options handle. `f3d_ext` symbol. Returns 1 on success, 0
+if there is no interactor.
+"""
+function f3d_ext_enable_sprite_size_keys(window, options, size = 10.0, factor = 1.25)
+    ccall((:f3d_ext_enable_sprite_size_keys, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cvoid}, Cdouble, Cdouble),
+          window, options, Cdouble(size), Cdouble(factor))
+end
+
+"""
+    f3d_ext_disable_sprite_size_keys(window)
+
+Remove the `Shift+'+'`/`'-'` sprite-resize key observer. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_sprite_size_keys(window)
+    ccall((:f3d_ext_disable_sprite_size_keys, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_sprite_zscale_sync(window, options)
+
+Keep point SPRITES at the `render.model_scale` (vertical-scale) locations. f3d applies
+model_scale as an actor transform, which anisotropically DISTORTS gaussian/sphere/circle
+splats; this instead bakes the current model_scale into the sprite point coordinates
+(from a cached original) so the sprites move to the stretched z without deforming.
+Re-applied when the `O` key cycles into a sprite mode and once on enable. Needs an
+interactor; pass the engine's options handle. `f3d_ext` symbol. Returns 1 on success.
+"""
+function f3d_ext_enable_sprite_zscale_sync(window, options)
+    ccall((:f3d_ext_enable_sprite_zscale_sync, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cvoid}), window, options)
+end
+
+"""
+    f3d_ext_disable_sprite_zscale_sync(window)
+
+Remove the sprite vertical-scale sync (and its `O` observer). `f3d_ext` symbol.
+"""
+function f3d_ext_disable_sprite_zscale_sync(window)
+    ccall((:f3d_ext_disable_sprite_zscale_sync, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_add_lines(window, points, n_points, line_sizes, n_lines, rgb, vert_rgb, width, overlay)
+
+Add polyline overlay(s) drawn ON TOP of the surfaces/images. The public libf3d mesh
+API only builds polygon cells, so lines go through the `f3d_ext` renderer hatch (a
+`vtkPolyData` of line cells + a flat-shaded `vtkActor`).
+
+`points` is a `Vector{Cdouble}` of xyz interleaved (`3*n_points`). `line_sizes` is a
+`Vector{Cuint}` of vertices per polyline (sum `== n_points`); pass `nothing`/`0` for a
+single polyline. `rgb` is a 3-element `Vector{Cdouble}` in `[0,1]` (or `nothing` →
+yellow). `vert_rgb` is `3*n_points` `UInt8` for per-vertex colour (overrides `rgb`) or
+`nothing`. `width` is in screen pixels. `overlay != 0` pulls the lines toward the
+camera so coplanar lines on a surface are not lost to z-fighting.
+
+`f3d_ext` symbol — only present in an f3d built with `c/f3d_ext_*.cxx`. Returns a
+line-set id (>= 1) for [`f3d_ext_remove_lines`](@ref), or 0 on error.
+"""
+function f3d_ext_add_lines(window, points::Vector{Cdouble}, n_points::Integer,
+        line_sizes, n_lines::Integer, rgb, vert_rgb, width::Real, overlay::Integer)
+    GC.@preserve points line_sizes rgb vert_rgb ccall((:f3d_ext_add_lines, libf3d), Cint,
+        (Ptr{f3d_window_t}, Ptr{Cdouble}, Csize_t, Ptr{Cuint}, Csize_t,
+         Ptr{Cdouble}, Ptr{Cuchar}, Cdouble, Cint),
+        window, points, Csize_t(n_points),
+        line_sizes === nothing ? C_NULL : line_sizes, Csize_t(n_lines),
+        rgb === nothing ? C_NULL : rgb,
+        vert_rgb === nothing ? C_NULL : vert_rgb,
+        Cdouble(width), Cint(overlay))
+end
+
+"""
+    f3d_ext_remove_lines(window, id)
+
+Remove one line set previously added with [`f3d_ext_add_lines`](@ref) by its `id`.
+No-op if unknown. `f3d_ext` symbol.
+"""
+function f3d_ext_remove_lines(window, id)
+    ccall((:f3d_ext_remove_lines, libf3d), Cvoid, (Ptr{f3d_window_t}, Cint), window, Cint(id))
+end
+
+"""
+    f3d_ext_clear_lines(window)
+
+Remove ALL line sets added to the window. No-op if none. `f3d_ext` symbol.
+"""
+function f3d_ext_clear_lines(window)
+    ccall((:f3d_ext_clear_lines, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_set_edge_visibility(window, actor_index, on; r=-1.0, g=-1.0, b=-1.0, width=0.0)
+
+Per-actor edge (wireframe) visibility — gap #6. Stock `render.show_edges` is global;
+this shows/hides a coloured wireframe for ONE imported actor (or all) by index into the
+coloring-actor list (import order). `actor_index = -1` applies to every actor.
+
+It draws a separate flat-shaded (LightingOff) wireframe overlay rather than toggling the
+actor's native edges — f3d renders the coloring actors as PBR, whose edge pass ignores
+edge colour (edges come out a dim grey). The overlay gives a crisp, caller-chosen colour,
+persists across renders, and is independent of the global `render.show_edges` option. It
+shares the source points and mirrors the source actor's transform at call time (lines up
+with a `render.model_scale` exaggeration; re-call after the scale changes). `on != 0`
+replaces any existing per-actor wireframe; `on = 0` removes it. Negative `r/g/b` → white;
+`width <= 0` → 1. Returns the number of actors changed (0 on error / out-of-range index).
+`f3d_ext` symbol.
+"""
+function f3d_ext_set_edge_visibility(window, actor_index, on; r = -1.0, g = -1.0, b = -1.0, width = 0.0)
+    ccall((:f3d_ext_set_edge_visibility, libf3d), Cint,
+          (Ptr{f3d_window_t}, Cint, Cint, Cdouble, Cdouble, Cdouble, Cdouble),
+          window, Cint(actor_index), Cint(on), Cdouble(r), Cdouble(g), Cdouble(b), Cdouble(width))
+end
+
+"""
+    f3d_ext_add_cell_edges(window, actor_index, cell_ids; r=-1.0, g=-1.0, b=-1.0, width=1.0)
+
+Wireframe overlay on a SUBSET of one mesh's faces (per-cell edges) — gap #6. Copies the
+given 0-based `cell_ids` from the imported actor at `actor_index` (sharing its points)
+into a separate wireframe actor, so edges show on a region without enabling edges for the
+whole mesh. The overlay mirrors the source actor's transform at call time (lines up with a
+`render.model_scale` exaggeration); call again after the scale changes to refresh.
+Negative `r/g/b` → white. Returns an overlay id (>= 1) for
+[`f3d_ext_remove_cell_edges`](@ref), or 0 on error. `f3d_ext` symbol.
+"""
+function f3d_ext_add_cell_edges(window, actor_index, cell_ids; r = -1.0, g = -1.0, b = -1.0, width = 1.0)
+    ids = Csize_t.(cell_ids)
+    GC.@preserve ids ccall((:f3d_ext_add_cell_edges, libf3d), Cint,
+        (Ptr{f3d_window_t}, Cint, Ptr{Csize_t}, Csize_t, Cdouble, Cdouble, Cdouble, Cdouble),
+        window, Cint(actor_index), pointer(ids), Csize_t(length(ids)),
+        Cdouble(r), Cdouble(g), Cdouble(b), Cdouble(width))
+end
+
+"""
+    f3d_ext_remove_cell_edges(window, id)
+
+Remove one cell-edge overlay added with [`f3d_ext_add_cell_edges`](@ref) by its `id`.
+No-op if unknown. `f3d_ext` symbol.
+"""
+function f3d_ext_remove_cell_edges(window, id)
+    ccall((:f3d_ext_remove_cell_edges, libf3d), Cvoid, (Ptr{f3d_window_t}, Cint), window, Cint(id))
+end
+
+"""
+    f3d_ext_clear_cell_edges(window)
+
+Remove ALL cell-edge overlays from the window. No-op if none. `f3d_ext` symbol.
+"""
+function f3d_ext_clear_cell_edges(window)
+    ccall((:f3d_ext_clear_cell_edges, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_enable_rubber_band_pick(window, callback, user_data, r=0.83, g=0.83, b=0.83)
+
+Install a rubber-band area point selector (DISARMED). Selection mode starts off:
+right-drag keeps its normal f3d behaviour until armed via Ctrl+B (or
+[`f3d_ext_set_rubber_band_armed`](@ref)). While armed, right-drag a box; on release
+the enclosed points are toggled into a persistent selection, highlighted with the
+`(r,g,b)` overlay colour (each in `[0,1]`, default light grey), and
+`callback` (a C function pointer of signature
+`void(const size_t* ids, size_t count, void* user_data)`) is invoked with the full
+selection. Ctrl+Z undoes. Intended for POINT CLOUDS (the frustum pick also returns
+occluded points, so it is unsuitable for solid surfaces). `f3d_ext` symbol. Returns
+1 on success, 0 if no interactor/renderer.
+"""
+function f3d_ext_enable_rubber_band_pick(window, callback, user_data, r = 0.83, g = 0.83, b = 0.83)
+    ccall((:f3d_ext_enable_rubber_band_pick, libf3d), Cint,
+          (Ptr{f3d_window_t}, Ptr{Cvoid}, Ptr{Cvoid}, Cdouble, Cdouble, Cdouble),
+          window, callback, user_data, Cdouble(r), Cdouble(g), Cdouble(b))
+end
+
+"""
+    f3d_ext_set_rubber_band_armed(window, armed)
+
+Arm (`armed != 0`) or disarm rubber-band selection mode programmatically; same as
+the Ctrl+B toggle. No-op if the selector is not enabled. `f3d_ext` symbol.
+"""
+function f3d_ext_set_rubber_band_armed(window, armed)
+    ccall((:f3d_ext_set_rubber_band_armed, libf3d), Cvoid, (Ptr{f3d_window_t}, Cint), window, Cint(armed))
+end
+
+"""
+    f3d_ext_get_rubber_band_armed(window)
+
+Return 1 if rubber-band selection mode is armed, else 0. `f3d_ext` symbol.
+"""
+function f3d_ext_get_rubber_band_armed(window)
+    ccall((:f3d_ext_get_rubber_band_armed, libf3d), Cint, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_disable_rubber_band_pick(window)
+
+Remove the rubber-band selector and its overlay. `f3d_ext` symbol.
+"""
+function f3d_ext_disable_rubber_band_pick(window)
+    ccall((:f3d_ext_disable_rubber_band_pick, libf3d), Cvoid, (Ptr{f3d_window_t},), window)
+end
+
+"""
+    f3d_ext_area_pick_points(window, x0, y0, x1, y1, count)
+
+Hardware area pick: returns a heap array of `count[]` point ids inside the display
+rectangle [x0,x1]x[y0,y1] (display coords, origin bottom-left). Free with
+[`f3d_ext_free_ids`](@ref). `f3d_ext` symbol.
+"""
+function f3d_ext_area_pick_points(window, x0, y0, x1, y1, count)
+    ccall((:f3d_ext_area_pick_points, libf3d), Ptr{Csize_t}, (Ptr{f3d_window_t}, Cint, Cint, Cint, Cint, Ptr{Csize_t}), window, x0, y0, x1, y1, count)
+end
+
+"""
+    f3d_ext_free_ids(ids)
+
+Free an id array returned by [`f3d_ext_area_pick_points`](@ref). `f3d_ext` symbol.
+"""
+function f3d_ext_free_ids(ids)
+    ccall((:f3d_ext_free_ids, libf3d), Cvoid, (Ptr{Csize_t},), ids)
 end
 
 """

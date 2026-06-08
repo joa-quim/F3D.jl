@@ -884,6 +884,38 @@ end
 
 ---
 
+## f3d_ext Extensions
+
+Functions available only in the extended `f3d_ext` build (absent on a stock DLL;
+probe with `Libdl.dlsym(Libdl.dlopen(F3D.libf3d), :f3d_ext_set_edge_visibility; throw_error=false) !== nothing`).
+
+### Edges (gap #6)
+
+Stock `render.show_edges` is global (all imported actors or none). These give
+per-actor and per-cell control. Each draws a separate flat-shaded wireframe overlay
+(f3d renders the imported actors as PBR, whose native edges ignore the edge colour),
+so the colour is crisp and caller-chosen. `actor_index` is the 0-based position in the
+scene's coloring-actor list (the order meshes were imported). Colours are `(r,g,b)` in
+`[0,1]`; a negative component means white. Overlays mirror the source actor's transform
+at call time (so they line up with a `render.model_scale` exaggeration) — re-call after
+the scale changes.
+
+| Function | Description |
+|:---------|:------------|
+| `f3d_ext_set_edge_visibility(window, actor_index, on; r=-1, g=-1, b=-1, width=0)` | Show (`on=1`) / hide (`on=0`) a coloured wireframe for one actor, or all with `actor_index=-1`. Returns the number of actors changed. |
+| `f3d_ext_add_cell_edges(window, actor_index, cell_ids; r=-1, g=-1, b=-1, width=1)` | Wireframe only the listed faces (`cell_ids`, 0-based) of one actor. Returns an overlay id (≥1). |
+| `f3d_ext_remove_cell_edges(window, id)` | Remove one cell-edge overlay by its id. |
+| `f3d_ext_clear_cell_edges(window)` | Remove all cell-edge overlays. |
+
+```julia
+F3D.f3d_ext_set_edge_visibility(window, 0, 1; r=1.0, g=0.0, b=1.0, width=2.0)  # magenta wireframe on actor 0
+F3D.f3d_ext_set_edge_visibility(window, -1, 0)                                 # hide edges on all actors
+id = F3D.f3d_ext_add_cell_edges(window, 0, collect(0:50); r=0.0, g=1.0, b=0.0, width=3.0)  # green subset
+F3D.f3d_ext_remove_cell_edges(window, id)
+```
+
+See `examples/edges_demo.jl` for a runnable demo.
+
 ## Updating F3D
 
 ```julia
