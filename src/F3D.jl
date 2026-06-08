@@ -107,7 +107,11 @@ for the raytracing asset matching the current platform.
 """
 function _find_asset_url(version::AbstractString="nightly")
 	tag = _find_release_tag(version)
-	api_url = "https://api.github.com/repos/f3d-app/f3d/releases/tags/$tag"
+	if (Sys.iswindows() && tag == "nightly")
+		api_url = "https://api.github.com/repos/joa-quim/F3D.jl/releases/tags/nightly"
+	else
+		api_url = "https://api.github.com/repos/f3d-app/f3d/releases/tags/$tag"
+	end
 	@info "Querying GitHub API for F3D release '$tag'..."
 
 	body = _github_api_fetch(api_url)
