@@ -225,6 +225,86 @@ function f3d_mesh_t(points, points_count, normals, normals_count,
 end
 
 """
+    f3d_mesh_data_type_t
+
+Scalar data types for a zero-copy [`f3d_memory_view_t`](@ref). Order mirrors
+`f3d::mesh_view::data_type`.
+"""
+@enum f3d_mesh_data_type_t::UInt32 begin
+    F3D_MESH_DATA_U8 = 0
+    F3D_MESH_DATA_I8
+    F3D_MESH_DATA_U16
+    F3D_MESH_DATA_I16
+    F3D_MESH_DATA_U32
+    F3D_MESH_DATA_I32
+    F3D_MESH_DATA_U64
+    F3D_MESH_DATA_I64
+    F3D_MESH_DATA_F32
+    F3D_MESH_DATA_F64
+end
+
+"""
+    f3d_data_array_t
+
+Zero-copy view of an existing array. `data` is NOT copied and must stay alive while the
+mesh view is in the scene. `name` may be `C_NULL`. `components`/`stride` default to 1 when
+left at 0; `stride` is counted in elements, not bytes.
+"""
+struct f3d_data_array_t
+    name::Cstring
+    type::f3d_mesh_data_type_t
+    data::Ptr{Cvoid}
+    components::Csize_t
+    stride::Csize_t
+    time_dependent::Cint
+end
+# Convenience: empty/unused array slot.
+f3d_data_array_t() = f3d_data_array_t(Cstring(C_NULL), F3D_MESH_DATA_F32, C_NULL, Csize_t(0), Csize_t(0), Cint(0))
+
+"""
+    f3d_cell_array_t
+
+Zero-copy view of a cell array. `offset_count` is cells+1 (leave 0 for "no cell"); the last
+offset equals `index_count`. `offsets`/`indices` must use an integer type (I32/U32/I64/U64).
+"""
+struct f3d_cell_array_t
+    offset_count::Csize_t
+    offsets::f3d_data_array_t
+    index_count::Csize_t
+    indices::f3d_data_array_t
+end
+f3d_cell_array_t() = f3d_cell_array_t(Csize_t(0), f3d_data_array_t(), Csize_t(0), f3d_data_array_t())
+
+"""
+    f3d_memory_view_t
+
+Zero-copy view of a whole mesh in memory (mirrors `f3d::mesh_view::memory_view_t`). Pass by
+`Ref` to [`f3d_scene_add_mesh_view`](@ref). All referenced pointers must stay pinned while
+the mesh is in the scene. `points` must have 3 components (F32/F64); `normals` (3) and
+`texture_coordinates` (2) are optional (leave `.data` `C_NULL`).
+"""
+struct f3d_memory_view_t
+    point_count::Csize_t
+    points::f3d_data_array_t
+    normals::f3d_data_array_t
+    texture_coordinates::f3d_data_array_t
+    vertices::f3d_cell_array_t
+    lines::f3d_cell_array_t
+    polygons::f3d_cell_array_t
+    point_scalars::Ptr{f3d_data_array_t}
+    point_scalars_count::Csize_t
+    cell_scalars::Ptr{f3d_data_array_t}
+    cell_scalars_count::Csize_t
+    base_color_texture::Ptr{Cvoid}
+    base_color_texture_width::Csize_t
+    base_color_texture_height::Csize_t
+    base_color_texture_components::Csize_t
+    base_color_texture_emissive::Cint
+    # Optional 4x4 GPU transform (row-major). An all-zero matrix means identity / no transform.
+    transform_matrix::NTuple{16,Cdouble}
+end
+
+"""
     f3d_mesh_is_valid(mesh, error_message)
 
 Check validity of a mesh.
@@ -1427,6 +1507,29 @@ Add and load a mesh into the scene.
 """
 function f3d_scene_add_mesh(scene, mesh)
     ccall((:f3d_scene_add_mesh, libf3d), Cint, (Ptr{f3d_scene_t}, Ptr{f3d_mesh_t}), scene, mesh)
+end
+
+"""
+    f3d_scene_add_mesh_view(scene, view, name, t_min, t_max)
+
+Add a zero-copy in-memory mesh view into the scene.
+
+Unlike [`f3d_scene_add_mesh`](@ref) (which copies all arrays into F3D), this keeps
+references to the caller-owned arrays described by `view`: no data is copied. Every
+pointer inside `view` (and the arrays it points at) MUST stay alive and pinned (e.g.
+`GC.@preserve`) until the scene is cleared. The array metadata is copied internally, so
+the `f3d_memory_view_t` value itself may be transient.
+
+Animation: pass a non-degenerate `[t_min, t_max]` range and mutate the referenced buffers
+in place between renders (keep the same pointers). Use `t_min == t_max` for a static mesh.
+
+# Returns
+1 on success, 0 on failure.
+"""
+function f3d_scene_add_mesh_view(scene, view, name, t_min, t_max)
+    ccall((:f3d_scene_add_mesh_view, libf3d), Cint,
+        (Ptr{f3d_scene_t}, Ptr{f3d_memory_view_t}, Cstring, Cdouble, Cdouble),
+        scene, view, name, t_min, t_max)
 end
 
 """
